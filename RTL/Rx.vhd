@@ -120,7 +120,10 @@ signal comput_parity: std_logic;
 signal Rdata_un, Fdata_un, Rdata_deux, Fdata_deux : std_logic;
 signal old_Din, old_Sin : std_logic;
 
-signal Rx_Clk_buf: std_logic;
+signal Ds,Dout,Den_aux, Den : std_logic;
+signal Sins,Sout,Sen_aux, Sen : std_logic;
+
+signal DxorS : std_logic;
 
 begin
 
@@ -128,17 +131,13 @@ begin
 -- Recover clock
 -------------------------------------------------------------------------------------------------
 
-Rx_Clk_buf <= Din xor Sin;
+Rx_Clk <= Din xor Sin;
+DxorS <= Dout xor Sout;
 
-BUFG_inst : BUFG
-   port map (
-      O => Rx_Clk, -- 1-bit output: Clock output.
-      I => Rx_Clk_buf  -- 1-bit input: Clock input.
-   );
 -------------------------------------------------------------------------------------------------
 -- Decode characters
 -------------------------------------------------------------------------------------------------
-Rising: process(State, Reset_n, Rx_Clk)
+Rising: process(State, Reset_n, Clk)
 
 variable Previous : std_logic_vector(2 downto 0);
 variable Data : std_logic_vector(15 downto 0);
@@ -192,167 +191,167 @@ begin
 
 
   else
-    if Rx_Clk='1' and Rx_Clk'event
-    then
-    
-    --		sample bit rising edge
-	
- 	
-    --    make paralele data for ouptut
-	Rx_Data <= Rx_Data(11 downto 0) & RData_deux & Fdata_deux;--------------------------modif effect
-	
-			
-	--	Decode data
-    Data := Rx_Data(13 downto 0) & RData_deux & Fdata_deux;
-
-    
---    view_data <= Data(3 downto 0); --for view
+    if Clk='1' and clk'event then
+        if DxorS='1' then    
+        --		sample bit rising edge
         
-	got_FCT_n <= '1';
-	got_EOP_n <= '1';
-	got_EEP_n <= '1';
-	got_ESC_n <= '1';
-	
-	got_NULL_n <= '1';
-	got_Time_n <= '1';
-	got_NChar_n <= '1';
-	Rx_FIFO_Wr_n <= '1';
-	
-	case Rx_State is
-
-	when Wait_First_Bit =>
-			if Data(1 downto 0)="01"
-			then Rx_State<=Ctrl;				
-			end if;
-			
-	when Wait_MSB => 	-- Wait for first Ctrl char
-
-			cpt:=0;
-			if Data(0)='1'	
-			then 		-- ctrl incoming
-			 	if Data(1) /= comput_parity then error_par_n <= '0';
-			    else error_par_n <= '1';
- 			    end if;
-				Rx_State<=Ctrl;
-			else 		-- data incoming
-				if (Data(1) /= (not comput_parity))	then error_par_n <= '0'; 			    
-				else error_par_n <= '1';				
- 			    end if;
-				Rx_State<=Normal;
-				comput_parity<='0';
-			end if;
-
-	when Ctrl =>	
-			if Data(2 downto 0) = C_FCT
-			then 
-				if signal_errorwait = '1'
-				then
-				     if Previous = C_ESC					
-				     then got_NULL_n <= '0';
-				     else 
-				     	got_FCT_n <= '0';
-				     	Error_ESC_n <= '1';
-				     end if;
-				 end if;
-				       			
-			     comput_parity <= '0';--modify 
-				 	     
-			     Rx_State<=Wait_MSB;
-			     Previous:=Data(2 downto 0);
-			     Rx_Data<=(others=>'0');
-
-			elsif Data(2 downto 0) = C_EOP
-			then 
-				 if signal_errorwait = '1'
-				 then 
-				 got_EOP_n <= '0';
-				     
-				 Rx_FIFO_D <= "100000000";
-	 			 Rx_FIFO_Wr_n <= '0';	
-	
-	
-				     if (Previous = C_ESC or (Previous =  C_EOP and State /= S_Run))
-				     then Error_ESC_n <= '0';
-				     else Error_ESC_n <= '1';
-				     end if;
-			     
-			     end if;
-			     
-			     		     
-			     comput_parity <= '1'; -- usually '1' 
-			     			     
-			     Rx_State <= Wait_MSB;
-			     Previous := Data(2 downto 0);
-			     Rx_Data <= (others=>'0');
-
-			elsif Data(2 downto 0) = C_EEP
-			then 
-				 if signal_errorwait = '1'
-				 then 
-			     got_EEP_n <= '0';
-
-			     	if Previous = C_ESC
-			    	then Error_ESC_n <= '0';
-			     	else Error_ESC_n <= '1';					
-			     	end if;
-			     end if;
-			     
-			     
-			     comput_parity <= '1'; -- usually '1' 
-			     			     
-			     Rx_State <= Wait_MSB;
-			     Previous := Data(2 downto 0);
-			     Rx_Data <= (others=>'0');
-
-			elsif Data(2 downto 0) = C_ESC
-			then
-				 if signal_errorwait = '1'
-				 then 
-			     got_ESC_n <= '0';
-				
-			     	if Previous = C_ESC
-			    	then Error_ESC_n <= '0';					
-			     	else Error_ESC_n <= '1';				
-			     	end if;
-			     end if;
-				     
-			     
-			     comput_parity <= '0';
-			     
-			     Rx_State <= Wait_MSB;
-			     Previous := Data(2 downto 0);
-			     Rx_Data <= (others=>'0');
-			end if; 
-			
-	when Normal =>
-			cpt := cpt+1;
-			comput_parity <= comput_parity xor (Data(0) xor Data(1));
-			if cpt=4 
-			then 
-			    if signal_errorwait = '1'
-				then 
-				stamp_Data := Data(0)&Data(1)&Data(2)&Data(3)&Data(4)&Data(5)&Data(6)&Data(7);
-			  	Rx_FIFO_D <='0' & stamp_Data;
-			  		if Previous = C_ESC
-			  		then 
-			  		got_Time_n <= '0';
-			  		Previous := "000";
-			  		else 
-			  		got_NChar_n <= '0';
-			  		Rx_FIFO_Wr_n <= '0';
-			  		end if;
-			  	end if;
-			  			  	
-			Rx_State <= Wait_MSB;
-			end if;
-		
-	when others =>
-			Rx_State <= Wait_First_Bit;
-
-	end case;
-
-    end if;
-  end if;
+        
+        --    make paralele data for ouptut
+        Rx_Data <= Rx_Data(11 downto 0) & RData_deux & Fdata_deux;--------------------------modif effect
+        
+                
+        --	Decode data
+        Data := Rx_Data(13 downto 0) & RData_deux & Fdata_deux;
+    
+        
+    --    view_data <= Data(3 downto 0); --for view
+            
+        got_FCT_n <= '1';
+        got_EOP_n <= '1';
+        got_EEP_n <= '1';
+        got_ESC_n <= '1';
+        
+        got_NULL_n <= '1';
+        got_Time_n <= '1';
+        got_NChar_n <= '1';
+        Rx_FIFO_Wr_n <= '1';
+        
+        case Rx_State is
+    
+        when Wait_First_Bit =>
+                if Data(1 downto 0)="01"
+                then Rx_State<=Ctrl;				
+                end if;
+                
+        when Wait_MSB => 	-- Wait for first Ctrl char
+    
+                cpt:=0;
+                if Data(0)='1'	
+                then 		-- ctrl incoming
+                    if Data(1) /= comput_parity then error_par_n <= '0';
+                    else error_par_n <= '1';
+                    end if;
+                    Rx_State<=Ctrl;
+                else 		-- data incoming
+                    if (Data(1) /= (not comput_parity))	then error_par_n <= '0'; 			    
+                    else error_par_n <= '1';				
+                    end if;
+                    Rx_State<=Normal;
+                    comput_parity<='0';
+                end if;
+    
+        when Ctrl =>	
+                if Data(2 downto 0) = C_FCT
+                then 
+                    if signal_errorwait = '1'
+                    then
+                         if Previous = C_ESC					
+                         then got_NULL_n <= '0';
+                         else 
+                            got_FCT_n <= '0';
+                            Error_ESC_n <= '1';
+                         end if;
+                     end if;
+                                    
+                     comput_parity <= '0';--modify 
+                             
+                     Rx_State<=Wait_MSB;
+                     Previous:=Data(2 downto 0);
+                     Rx_Data<=(others=>'0');
+    
+                elsif Data(2 downto 0) = C_EOP
+                then 
+                     if signal_errorwait = '1'
+                     then 
+                     got_EOP_n <= '0';
+                         
+                     Rx_FIFO_D <= "100000000";
+                     Rx_FIFO_Wr_n <= '0';	
+        
+        
+                         if (Previous = C_ESC or (Previous =  C_EOP and State /= S_Run))
+                         then Error_ESC_n <= '0';
+                         else Error_ESC_n <= '1';
+                         end if;
+                     
+                     end if;
+                     
+                                 
+                     comput_parity <= '1'; -- usually '1' 
+                                     
+                     Rx_State <= Wait_MSB;
+                     Previous := Data(2 downto 0);
+                     Rx_Data <= (others=>'0');
+    
+                elsif Data(2 downto 0) = C_EEP
+                then 
+                     if signal_errorwait = '1'
+                     then 
+                     got_EEP_n <= '0';
+    
+                        if Previous = C_ESC
+                        then Error_ESC_n <= '0';
+                        else Error_ESC_n <= '1';					
+                        end if;
+                     end if;
+                     
+                     
+                     comput_parity <= '1'; -- usually '1' 
+                                     
+                     Rx_State <= Wait_MSB;
+                     Previous := Data(2 downto 0);
+                     Rx_Data <= (others=>'0');
+    
+                elsif Data(2 downto 0) = C_ESC
+                then
+                     if signal_errorwait = '1'
+                     then 
+                     got_ESC_n <= '0';
+                    
+                        if Previous = C_ESC
+                        then Error_ESC_n <= '0';					
+                        else Error_ESC_n <= '1';				
+                        end if;
+                     end if;
+                         
+                     
+                     comput_parity <= '0';
+                     
+                     Rx_State <= Wait_MSB;
+                     Previous := Data(2 downto 0);
+                     Rx_Data <= (others=>'0');
+                end if; 
+                
+        when Normal =>
+                cpt := cpt+1;
+                comput_parity <= comput_parity xor (Data(0) xor Data(1));
+                if cpt=4 
+                then 
+                    if signal_errorwait = '1'
+                    then 
+                    stamp_Data := Data(0)&Data(1)&Data(2)&Data(3)&Data(4)&Data(5)&Data(6)&Data(7);
+                    Rx_FIFO_D <='0' & stamp_Data;
+                        if Previous = C_ESC
+                        then 
+                        got_Time_n <= '0';
+                        Previous := "000";
+                        else 
+                        got_NChar_n <= '0';
+                        Rx_FIFO_Wr_n <= '0';
+                        end if;
+                    end if;
+                                
+                Rx_State <= Wait_MSB;
+                end if;
+            
+        when others =>
+                Rx_State <= Wait_First_Bit;
+    
+        end case;
+    
+        end if;
+      end if;
+   end if;
 end process;
 
 
@@ -362,15 +361,17 @@ end process;
 ----------------------------------------------------------------------------
 -- input on falling edge
 ----------------------------------------------------------------------------
-FF_Fun : process(Reset_n, Rx_Clk)
+FF_Fun : process(Reset_n, clk)
 begin
   if Reset_n = '0' --or State = ErrorReset
   then 
   FData_un <= '0';
   else
-    if Rx_Clk = '0' and Rx_Clk 'event
+    if clk = '1' and clk 'event
     then 
-    FData_un <= Din;
+        if DxorS='0' then    
+        FData_un <= Dout;
+        end if;
     end if;
   end if;
 end process;
@@ -381,15 +382,17 @@ end process;
 ----------------------------------------------------------------------------
 -- input on falling edge
 ----------------------------------------------------------------------------
-FF_Fdeux : process(Reset_n, Rx_Clk)
+FF_Fdeux : process(Reset_n, clk)
 begin
   if Reset_n = '0' --or State = ErrorReset
   then 
   FData_deux <= '0';
   else
-    if Rx_Clk = '0' and Rx_Clk'event
+    if clk = '1' and clk'event
     then 
-    FData_deux <= FData_un;
+        if DxorS='0' then   
+            FData_deux <= FData_un;
+        end if;
     end if;
   end if;
 end process;
@@ -397,15 +400,17 @@ end process;
 ----------------------------------------------------------------------------
 -- input on rasing edge
 ----------------------------------------------------------------------------
-FF_Run : process(Reset_n, Rx_Clk)
+FF_Run : process(Reset_n, clk)
 begin
   if Reset_n = '0' --or State = ErrorReset
   then 
   RData_un <= '0';
   else
-    if Rx_Clk = '1' and Rx_Clk 'event
-    then  
-    RData_un <= Din;
+    if clk = '1' and clk 'event
+    then 
+        if DxorS='1' then    
+            RData_un <= Dout;
+        end if;
     end if;
   end if;
 end process;
@@ -414,15 +419,17 @@ end process;
 ----------------------------------------------------------------------------
 -- input on rasing edge
 ----------------------------------------------------------------------------
-FF_Rdeux : process(Reset_n, Rx_Clk)
+FF_Rdeux : process(Reset_n, clk)
 begin
   if Reset_n = '0' --or State = ErrorReset
   then 
   RData_deux <= '0';
   else
-    if Rx_Clk='1' and Rx_Clk'event
-    then  
-    RData_deux <= RData_un;
+    if clk='1' and clk'event
+    then 
+        if DxorS='1' then    
+        RData_deux <= RData_un;
+        end if;
     end if;
   end if;
 end process;
@@ -478,7 +485,7 @@ old_Din <= '0';
 else
     if Clk='1' and Clk'event
     then 
-	old_Din <= Din;
+	old_Din <= Dout;
 	
     end if;
 	
@@ -497,12 +504,105 @@ old_Sin <= '0';
 else
     if Clk='1' and Clk'event
     then 
-	old_Sin <= Sin;
+	old_Sin <= Sout;
 	
     end if;
 	
 end if;
 end process;
+
+
+
+
+
+----------------------------------
+--SOLVINF METASTABILITY FOR DIN AND SIN
+----------------------------------
+
+
+----DIN-----
+
+process (clk)
+begin
+   if clk'event and clk='1' then
+      if Reset_n='0' then
+         Ds <= '0';
+      else
+         Ds <= Din;
+      end if;
+   end if;
+end process;
+
+
+process (clk)
+begin
+   if clk'event and clk='1' then
+      if Reset_n='0' then
+         Dout <= '0';
+      else
+         Dout <= Ds;
+      end if;
+   end if;
+end process;
+
+
+process (clk)
+begin
+   if clk'event and clk='1' then
+      if Reset_n='0' then
+         Den_aux <= '0';
+      else
+         Den_aux <= Dout;
+      end if;
+   end if;
+end process;
+
+
+Den <= (not Den_aux) and Dout;
+
+-----Sout------
+
+process (clk)
+begin
+   if clk'event and clk='1' then
+      if Reset_n='0' then
+         Sins <= '0';
+      else
+         Sins <= Sin;
+      end if;
+   end if;
+end process;
+
+
+process (clk)
+begin
+   if clk'event and clk='1' then
+      if Reset_n='0' then
+         Sout <= '0';
+      else
+         Sout <= Sins;
+      end if;
+   end if;
+end process;
+
+
+
+process (clk)
+begin
+   if clk'event and clk='1' then
+      if Reset_n='0' then
+         Sen_aux <= '0';
+      else
+         Sen_aux <= Sout;
+      end if;
+   end if;
+end process;
+
+Sen <= (not Sen_aux) and Sout;
+
+
+
+
 
 
 end r1;
