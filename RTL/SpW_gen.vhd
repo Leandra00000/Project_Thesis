@@ -80,49 +80,51 @@ begin
     
     data_in_FIFO <= (others => '0');
     
-    process(Clk, Reset_n)
+    process(Clk)
     begin
-        if Reset_n = '0' then
-            counter <= (others => '0');
-            Din <= (others => '0');
-            Wr_n <= '1'; -- No write
-            eop <= '0';
-            count <=0;
-        elsif rising_edge(Clk) then
-            if Full_n = '1' and Wr_n_buffer = '1' then  -- FIFO not full
-               
-                
-                -- Create the Din output: counter + EOP
-                counter <= counter + 1;
-                Din(7 downto 0) <= std_logic_vector(counter);
-                Din(8) <= eop;  -- EOP in bit 8
-                
-                
-                Wr_n <= '0';
-                Wr_n_buffer <='0';
-                --Tx_Send_Time <= '1';
-                Tx_Time_Code <= std_logic_vector(counter);
-                	
-                --count <= 0;
-                
-            else
-                Wr_n <= '1';   
-                Wr_n_buffer <='1';
-                --tick_in_buffer_n <= '0'; 
-                --count <= count +1;
+        if (rising_edge (clk)) then
+            if Reset_n = '0' then
+                counter <= (others => '0');
+                Din <= (others => '0');
+                Wr_n <= '1'; -- No write
+                eop <= '0';
+                count <=0;
+            else 
+                if Full_n = '1' and Wr_n_buffer = '1' then  -- FIFO not full
+                   
+                    
+                    -- Create the Din output: counter + EOP
+                    counter <= counter + 1;
+                    Din(7 downto 0) <= std_logic_vector(counter);
+                    Din(8) <= eop;  -- EOP in bit 8
+                    
+                    
+                    Wr_n <= '0';
+                    Wr_n_buffer <='0';
+                    --Tx_Send_Time <= '1';
+                    Tx_Time_Code <= std_logic_vector(counter);
+                        
+                    --count <= 0;
+                    
+                else
+                    Wr_n <= '1';   
+                    Wr_n_buffer <='1';
+                    --tick_in_buffer_n <= '0'; 
+                    --count <= count +1;
+                end if;
+    --            if  Tx_Send_Time = '1' then	
+    --                Tx_Send_Time  <= '0';
+    --            else
+    --                if count > 200 then
+    --                    Tx_Send_Time <= '1';
+    --                    Tx_Time_Code <= std_logic_vector(counter);
+    --                    count <= 0;
+    --                else
+    --                    count <= count + 1;
+    --                    Tx_Send_Time <= '0';
+    --                end if;
+    --            end if;	
             end if;
---            if  Tx_Send_Time = '1' then	
---                Tx_Send_Time  <= '0';
---            else
---                if count > 200 then
---                    Tx_Send_Time <= '1';
---                    Tx_Time_Code <= std_logic_vector(counter);
---                    count <= 0;
---                else
---                    count <= count + 1;
---                    Tx_Send_Time <= '0';
---                end if;
---            end if;	
         end if;
     end process;
     

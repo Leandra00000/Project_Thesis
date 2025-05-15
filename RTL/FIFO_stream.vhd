@@ -263,8 +263,6 @@ begin
             else
                 read_ptr <= read_ptr + 1;           
             end if;
-          elsif (tx_en = '0') then
-            stream_data_out <= "11111111";
 	      end if;                                                                   
 	     end if;                                                                    
 	   end process;                                                                 
