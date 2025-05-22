@@ -40,7 +40,7 @@ if { [string first $scripts_vivado_version $current_vivado_version] == -1 } {
 
 # The design that will be created by this Tcl script contains the following 
 # module references:
-# SpW_gen, spwr_ip, spwr_ip, FIFO_stream
+# spwr_ip, spwr_ip, FIFO_stream, tb_SpW_AxiM, SpW_gen
 
 # Please add the sources of those modules before sourcing this Tcl script.
 
@@ -157,10 +157,11 @@ xilinx.com:ip:axis_data_fifo:2.0\
 set bCheckModules 1
 if { $bCheckModules == 1 } {
    set list_check_mods "\ 
-SpW_gen\
 spwr_ip\
 spwr_ip\
 FIFO_stream\
+tb_SpW_AxiM\
+SpW_gen\
 "
 
    set list_mods_missing ""
@@ -228,17 +229,6 @@ proc create_root_design { parentCell } {
   set Clk [ create_bd_port -dir I Clk ]
   set Reset_n [ create_bd_port -dir I Reset_n ]
 
-  # Create instance: SpW_gen_0, and set properties
-  set block_name SpW_gen
-  set block_cell_name SpW_gen_0
-  if { [catch {set SpW_gen_0 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   } elseif { $SpW_gen_0 eq "" } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   }
-  
   # Create instance: spwr_ip_0, and set properties
   set block_name spwr_ip
   set block_cell_name spwr_ip_0
@@ -280,16 +270,39 @@ proc create_root_design { parentCell } {
      return 1
    }
   
+  # Create instance: tb_SpW_AxiM_0, and set properties
+  set block_name tb_SpW_AxiM
+  set block_cell_name tb_SpW_AxiM_0
+  if { [catch {set tb_SpW_AxiM_0 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
+     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
+     return 1
+   } elseif { $tb_SpW_AxiM_0 eq "" } {
+     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
+     return 1
+   }
+  
+  # Create instance: SpW_gen_0, and set properties
+  set block_name SpW_gen
+  set block_cell_name SpW_gen_0
+  if { [catch {set SpW_gen_0 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
+     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
+     return 1
+   } elseif { $SpW_gen_0 eq "" } {
+     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
+     return 1
+   }
+  
   # Create interface connections
-  connect_bd_intf_net -intf_net FIFO_stream_1_M_AXIS [get_bd_intf_pins axis_data_fifo_0/S_AXIS] [get_bd_intf_pins FIFO_stream_1/M_AXIS]
+  connect_bd_intf_net -intf_net FIFO_stream_1_M_AXIS [get_bd_intf_pins FIFO_stream_1/M_AXIS] [get_bd_intf_pins axis_data_fifo_0/S_AXIS]
+  connect_bd_intf_net -intf_net tb_SpW_AxiM_0_M_AXI [get_bd_intf_pins tb_SpW_AxiM_0/M_AXI] [get_bd_intf_pins SpW_gen_0/S_AXI]
 
   # Create port connections
-  connect_bd_net -net Clk_1 [get_bd_ports Clk] [get_bd_pins SpW_gen_0/Clk] [get_bd_pins spwr_ip_0/Clk] [get_bd_pins spwr_ip_1/Clk] [get_bd_pins axis_data_fifo_0/s_axis_aclk] [get_bd_pins FIFO_stream_1/clk]
+  connect_bd_net -net Clk_1 [get_bd_ports Clk] [get_bd_pins spwr_ip_0/Clk] [get_bd_pins spwr_ip_1/Clk] [get_bd_pins axis_data_fifo_0/s_axis_aclk] [get_bd_pins FIFO_stream_1/clk] [get_bd_pins tb_SpW_AxiM_0/M_AXI_ACLK] [get_bd_pins SpW_gen_0/Clk]
   connect_bd_net -net Data_Generator_1_Link_start_out [get_bd_pins SpW_gen_0/Link_start_out] [get_bd_pins spwr_ip_0/Link_start] [get_bd_pins spwr_ip_1/Link_start]
   connect_bd_net -net Data_Generator_1_auto_start_out [get_bd_pins SpW_gen_0/auto_start_out] [get_bd_pins spwr_ip_0/auto_start] [get_bd_pins spwr_ip_1/auto_start]
   connect_bd_net -net Data_Generator_1_link_Enabled_out [get_bd_pins SpW_gen_0/link_Enabled_out] [get_bd_pins spwr_ip_0/link_Enabled] [get_bd_pins spwr_ip_1/link_Enabled]
   connect_bd_net -net FIFO_stream_1_Rx_Rd_n [get_bd_pins FIFO_stream_1/Rx_Rd_n] [get_bd_pins spwr_ip_1/Rx_Rd_n]
-  connect_bd_net -net Reset_n_1 [get_bd_ports Reset_n] [get_bd_pins SpW_gen_0/Reset_n] [get_bd_pins spwr_ip_0/Reset_n] [get_bd_pins spwr_ip_1/Reset_n] [get_bd_pins axis_data_fifo_0/s_axis_aresetn] [get_bd_pins FIFO_stream_1/reset_n]
+  connect_bd_net -net Reset_n_1 [get_bd_ports Reset_n] [get_bd_pins spwr_ip_0/Reset_n] [get_bd_pins spwr_ip_1/Reset_n] [get_bd_pins axis_data_fifo_0/s_axis_aresetn] [get_bd_pins FIFO_stream_1/reset_n] [get_bd_pins tb_SpW_AxiM_0/M_AXI_ARESETN] [get_bd_pins SpW_gen_0/Reset_n]
   connect_bd_net -net SpW_gen_0_Din [get_bd_pins SpW_gen_0/Din] [get_bd_pins spwr_ip_0/Tx_Din]
   connect_bd_net -net SpW_gen_0_Din_2 [get_bd_pins SpW_gen_0/Din_2] [get_bd_pins spwr_ip_1/Tx_Din]
   connect_bd_net -net SpW_gen_0_Rx_Rd_n [get_bd_pins SpW_gen_0/Rx_Rd_n] [get_bd_pins spwr_ip_0/Rx_Rd_n]
@@ -298,6 +311,7 @@ proc create_root_design { parentCell } {
   connect_bd_net -net SpW_gen_0_Wr_n [get_bd_pins SpW_gen_0/Wr_n] [get_bd_pins spwr_ip_0/Tx_Wr_n]
   connect_bd_net -net SpW_gen_0_Wr_n_2 [get_bd_pins SpW_gen_0/Wr_n_2] [get_bd_pins spwr_ip_1/Tx_Wr_n]
   connect_bd_net -net SpW_gen_0_data_in_FIFO [get_bd_pins SpW_gen_0/data_in_FIFO]
+  connect_bd_net -net SpW_gen_0_m_axis_tready [get_bd_pins SpW_gen_0/m_axis_tready] [get_bd_pins axis_data_fifo_0/m_axis_tready]
   connect_bd_net -net SpW_gen_0_wd_timeout [get_bd_pins SpW_gen_0/wd_timeout] [get_bd_pins spwr_ip_0/wd_timeout] [get_bd_pins spwr_ip_1/wd_timeout]
   connect_bd_net -net spwr_ip_0_Dout [get_bd_pins spwr_ip_0/Dout] [get_bd_pins spwr_ip_1/Din]
   connect_bd_net -net spwr_ip_0_Sout [get_bd_pins spwr_ip_0/Sout] [get_bd_pins spwr_ip_1/Sin]
