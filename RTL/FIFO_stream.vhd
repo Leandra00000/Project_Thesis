@@ -8,7 +8,7 @@ entity FIFO_stream is
         DATA_WIDTH : integer := 8;  -- Bit-width of each FIFO entry
         FIFO_DEPTH : integer := 512;  -- Number of entries in the FIFO
 
-
+        RMAP_DECODER: std_logic:='0';
 
 
 		-- User parameters ends
@@ -17,7 +17,7 @@ entity FIFO_stream is
 		-- Width of S_AXIS address bus. The slave accepts the read and write addresses of width C_M_AXIS_TDATA_WIDTH.
 		C_M_AXIS_TDATA_WIDTH	: integer	:= 8;
 		-- Start count is the number of clock cycles the master will wait before initiating/issuing any transaction.
-		C_M_START_COUNT	: integer	:= 8;
+		C_M_START_COUNT	: integer	:= 1;
 		-- Total number of output data                                              
 	    NUMBER_OF_OUTPUT_WORDS : integer := 32  
 	);
@@ -55,6 +55,7 @@ architecture Behavioral of FIFO_stream is
     signal write_ptr : integer range 0 to FIFO_DEPTH-1 := 0;  -- Write pointer
     signal read_ptr  : integer range 0 to FIFO_DEPTH-1 := 0;  -- Read pointer
     signal count_fifo     : integer range 0 to FIFO_DEPTH := 0;    -- Number of elements in FIFO
+    signal rmap_counter     : integer range 0 to 533 := 0;
     signal full_sig  : std_logic := '0';                      -- Internal full signal
     signal empty_sig : std_logic := '1';                      -- Internal empty signal
     type state_fifo is ( IDLE,        -- This is the initial/idle state                    
@@ -298,28 +299,49 @@ begin
                         end if; 
                                          
                     when GET_DATA =>
-                        fifo_reg(write_ptr) <= data_in_Rx(7 downto 0); 
                         Rx_Rd_n <= '1';
-                               
-                        if write_ptr = FIFO_DEPTH-1 then
-                            write_ptr <= 0;                     
-                        else
-                            write_ptr <= write_ptr + 1;         
+                        if RMAP_DECODER='1' then   --RMAP DECODER               
+                            rmap_counter <= rmap_counter+1;
+                            if rmap_counter >= 531 then
+                                rmap_counter <= 0;
+                            elsif rmap_counter >= 17+4 then
+                            
+                                fifo_reg(write_ptr) <= data_in_Rx(7 downto 0);           
+                                if write_ptr = FIFO_DEPTH-1 then
+                                    write_ptr <= 0;                     
+                                else
+                                    write_ptr <= write_ptr + 1;         
+                                end if;
+                                count_fifo <= count_fifo + 1;
+                            end if;            
+                        else                        --WITHOUT RMAP  
+                            fifo_reg(write_ptr) <= data_in_Rx(7 downto 0);       
+                            if write_ptr = FIFO_DEPTH-1 then
+                                write_ptr <= 0;                     
+                            else
+                                write_ptr <= write_ptr + 1;         
+                            end if;
+                            count_fifo <= count_fifo + 1; 
+                            
                         end if;
-                        count_fifo <= count_fifo + 1; 
+                        
                         current_state_fifo_write <= IDLE;
-           
-                    
+                        
                     when others =>
                         current_state_fifo_write <= IDLE;
                     
                 end case;     
                 
-                
-                if tx_en = '1' and empty_sig = '0' then
-                    count_fifo <= count_fifo - 1; 
+                --Update amount of data from this FIFO
+                if current_state_fifo_write = GET_DATA and tx_en = '1' then
+                    count_fifo <= count_fifo;
+                elsif current_state_fifo_write = GET_DATA and tx_en = '0' and (RMAP_DECODER='0' or (RMAP_DECODER='1' and  rmap_counter >= 17+4 and rmap_counter < 531)) then
+                    count_fifo <= count_fifo + 1;
+                elsif tx_en = '1' then
+                    count_fifo <= count_fifo - 1;
                 end if;
                 
+                --Check if enought data to send
                 if read_pointer = NUMBER_OF_OUTPUT_WORDS then
                     enough_data <='0';  
                 elsif count_fifo >= NUMBER_OF_OUTPUT_WORDS then

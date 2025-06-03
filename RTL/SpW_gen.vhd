@@ -24,9 +24,7 @@ entity SpW_gen is
 	port (
 		-- Users to add ports here
         Clk : in std_logic;
-        Reset_n: in std_logic;
-             
-        m_axis_tready : out  std_logic;
+        Reset_n: in std_logic;           
         
         data_in_FIFO: out std_logic_vector(DATA_WIDTH_OUT-1 downto 0);
         -- Tx_FIFO signals
@@ -445,14 +443,16 @@ begin
     
     wd_timeout <= x"0011";
 
-    
-    m_axis_tready <='0';
+
     Rx_Rd_n <='1';
     
     Din_2 <= (others => '0');
     Wr_n_2 <= '1';
     
     data_in_FIFO <= (others => '0');
+    
+    
+    
     
     process(Clk)
     begin
