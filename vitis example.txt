@@ -63,6 +63,7 @@
 #include "sleep.h"
 #include "xiltimer.h"
 #include <stdio.h>
+#include <math.h>
 
 #if defined(XPAR_UARTNS550_0_BASEADDR)
 #include "xuartns550_l.h"       /* to use uartns550 */
@@ -105,7 +106,7 @@ DEFAULT SET TO 0x01000000
 #define RX_BUFFER_BASE		(MEM_BASE_ADDR + 0x00300000)
 #define RX_BUFFER_HIGH		(MEM_BASE_ADDR + 0x004FFFFF)
 
-#define MAX_PKT_LEN		512
+#define MAX_PKT_LEN		32
 
 #define TEST_START_VALUE	0xC
 
@@ -232,6 +233,28 @@ void PrintRxData(u8 *base, int num_transfers, int packet_size) {
 }
 
 
+void SaveTransferStatsToFile(float total_time, float total_cycles, int Tries) {
+    char filename[64];
+    snprintf(filename, sizeof(filename), "%d.txt", MAX_PKT_LEN);
+
+    FILE *fp = fopen(filename, "w");
+    if (fp == NULL) {
+        printf("Failed to open file: %s\n", filename);
+        return;
+    }
+
+    fprintf(fp, "MAX_PKT_LEN = %d\n", MAX_PKT_LEN);
+    fprintf(fp, "Transfers performed = %d\n", Tries);
+    fprintf(fp, "Total time = %.6f us\n", total_time);
+    fprintf(fp, "Average time per operation = %.6f us\n", total_time / Tries);
+    fprintf(fp, "Average time per Byte = %.6f us\n", total_time / (Tries * MAX_PKT_LEN));
+    fprintf(fp, "Average cycles per Byte = %.6f cycles\n", total_cycles / (Tries * MAX_PKT_LEN));
+
+    fclose(fp);
+    printf("Stats saved to %s\n", filename);
+}
+
+
 /*****************************************************************************/
 /**
 * The example to do the simple transfer through polling. The constant
@@ -255,7 +278,7 @@ int XAxiDma_SimplePollExample(UINTPTR BaseAddress)
 {
 	XAxiDma_Config *CfgPtr;
 	int Status;
-	int Tries = NUMBER_OF_TRANSFERS_512KB;
+	int Tries = 100;
 	int Index;
 	u8 *RxBufferPtr;
 
@@ -263,7 +286,7 @@ int XAxiDma_SimplePollExample(UINTPTR BaseAddress)
     int i;
 
 	RxBufferPtr = (u8 *)RX_BUFFER_BASE;
-    int duration_cycles;
+    float duration_cycles;
     float duration_us;
 
 	/* Initialize the XAxiDma device.
@@ -310,6 +333,8 @@ int XAxiDma_SimplePollExample(UINTPTR BaseAddress)
     //u32 spw_status = Xil_In32(XPAR_SPW_GEN_0_BASEADDR);
     //xil_printf("SpW Status = 0x%08x\n", spw_status);
 
+    usleep(5U);
+
 	for (Index = 0; Index < Tries; Index ++) {
 
         XTime_GetTime(&tStart);
@@ -336,6 +361,8 @@ int XAxiDma_SimplePollExample(UINTPTR BaseAddress)
         total_cycles += duration_cycles;
 
         RxBufferPtr+=MAX_PKT_LEN;
+
+        usleep((unsigned int)ceil(0.1 * MAX_PKT_LEN));
 
         //Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, MAX_PKT_LEN);
         
@@ -366,10 +393,13 @@ int XAxiDma_SimplePollExample(UINTPTR BaseAddress)
     Xil_Out32(XPAR_SPW_GEN_0_BASEADDR, 0x00);    
     Xil_DCacheInvalidateRange((UINTPTR)RX_BUFFER_BASE, Tries * MAX_PKT_LEN);
     PrintRxData((u8 *)RX_BUFFER_BASE, Tries, MAX_PKT_LEN);
-    printf("Total time = %.6f us.\n", total_time);
-	printf("Average time per operation = %.6fus.\n" , total_time/Tries);
-	printf("Average time per Byte = %.6fus. \n", total_time/(Tries * MAX_PKT_LEN));
-    printf("Average cycles per Byte = %.6f. \n", ((float) total_cycles)/(Tries * MAX_PKT_LEN));
+    printf("MAX_PKT_LEN = %d\n", MAX_PKT_LEN);
+    printf("Transfers performed = %d\n", Tries);
+    printf("Total time = %.6f us\n", total_time);
+    printf("Average time per operation = %.6f us\n", total_time / Tries);
+    printf("Average time per Byte = %.6f us\n", total_time / (Tries * MAX_PKT_LEN));
+    printf("Average cycles per Byte = %.6f cycles\n", ((float) total_cycles)/(Tries * MAX_PKT_LEN));
+    //SaveTransferStatsToFile(total_time,total_cycles,Tries);
 	
     
     /* Test finishes successfully
