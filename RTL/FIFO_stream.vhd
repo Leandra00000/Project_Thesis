@@ -30,6 +30,7 @@ entity FIFO_stream is
         full     : out std_logic;                      -- FIFO full flag
         empty    : out std_logic;                       -- FIFO empty flag
         Rx_Rd_n     : out std_logic;
+        Amount_Data     : out std_logic_vector(14 downto 0);
         
         
 		-- User ports ends
@@ -91,7 +92,7 @@ architecture Behavioral of FIFO_stream is
 	                                                                                  
 	-- In this example, Depth of FIFO is determined by the greater of                 
 	-- the number of input words and output words.                                    
-	constant depth : integer := NUMBER_OF_OUTPUT_WORDS;                               
+	constant depth : integer := NUMBER_OF_OUTPUT_WORDS*2;                               
 	                                                                                  
 	-- bit_num gives the minimum number of bits needed to address 'depth' size of FIFO
 	constant bit_num : integer := clogb2(depth);                                      
@@ -273,6 +274,9 @@ begin
 	
 	full  <= full_sig;
     empty <= empty_sig;
+    
+    Amount_Data <= std_logic_vector(to_unsigned(count_fifo, Amount_Data'length));
+    
 
     -- FIFO control process
     process (clk, reset_n)
