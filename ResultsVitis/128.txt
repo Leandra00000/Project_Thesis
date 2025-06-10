@@ -1,0 +1,6 @@
+MAX_PKT_LEN = 128
+Transfers performed = 100
+Total time = 429.769928 us
+Average time per operation = 4.297699 us
+Average time per Byte = 0.033576 us
+Average cycles per Byte = 6.715156 cycles
