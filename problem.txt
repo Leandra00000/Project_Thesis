@@ -113,6 +113,12 @@ DEFAULT SET TO 0x01000000
 #define RX_BUFFER_BASE		(MEM_BASE_ADDR + 0x00300000)
 #define RX_BUFFER_HIGH		(MEM_BASE_ADDR + 0x004FFFFF)
 
+#define RX_TOTAL_SIZE       0x80000000U       // 2GB
+#define RX_DMA_COUNT        4
+#define RX_PER_DMA_SIZE     (RX_TOTAL_SIZE / RX_DMA_COUNT)  // 0x20000000 = 512MB
+
+#define RX_BUFFER_BASE_4(i)   ((MEM_BASE_ADDR + ((i) * RX_PER_DMA_SIZE)))
+
 
 #define TEST_START_VALUE	0xC
 
@@ -136,6 +142,8 @@ int XAxiDma_SimplePollExample(int Dma_read, int Dma_store, int Tries, int MAX_PK
 
 static int CheckData(u8 *base, int num_transfers, int MAX_PKT_LEN);
 int Single_DMA_Pool();
+int Store_All_DMAS(int Tries, int MAX_PKT_LEN);
+int All_DMA_Pool();
 
 /************************** Variable Definitions *****************************/
 /*
@@ -143,6 +151,10 @@ int Single_DMA_Pool();
  */
 XAxiDma AxiDma[8];
 XTime tStart, tEnd;
+XTime tStart_1, tEnd_1;
+XTime tStart_2, tEnd_2;
+XTime tStart_3, tEnd_3;
+XTime tStart_4, tEnd_4;
 float total_time=0;
 int total_cycles=0;
 
@@ -242,20 +254,40 @@ int main()
     
     
 #endif
-/*
+
 	if (Status0 != XST_SUCCESS || Status1 != XST_SUCCESS || Status2 != XST_SUCCESS || Status3 != XST_SUCCESS || Status4 != XST_SUCCESS || Status5 != XST_SUCCESS || Status6 != XST_SUCCESS || Status7 != XST_SUCCESS) {
 		xil_printf("XAxiDma_SimplePoll Example Failed\r\n");
 		return XST_FAILURE;
 	}
-   */ 
+    
     Status = Single_DMA_Pool();
     if (Status != XST_SUCCESS) {
         xil_printf("DMA transfers failed.\r\n");
         return XST_FAILURE;
     }
-    
-    
 
+   /* 
+    Status = XAxiDma_SimplePollExample(1,0,200,1024);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    */
+    
+/*
+    Status= Store_All_DMAS(1,131072);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+  */
+/*
+    Status= All_DMA_Pool();
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+*/
 
 	xil_printf("Successfully ran XAxiDma_SimplePoll Example\r\n");
 
@@ -397,6 +429,7 @@ int XAxiDma_SimplePollExample(int Dma_read, int Dma_store, int Tries, int MAX_PK
 
 		
         RxBufferPtr+=MAX_PKT_LEN;
+        //usleep(100);
         
 
 	}
@@ -406,7 +439,8 @@ int XAxiDma_SimplePollExample(int Dma_read, int Dma_store, int Tries, int MAX_PK
     //}
     //PrintRxData((u8 *)RX_BUFFER_BASE, Tries, MAX_PKT_LEN);
     printf("MAX_PKT_LEN = %d, ", MAX_PKT_LEN);
-    printf("Bandwith = %.6f MB/s\n", (Tries * MAX_PKT_LEN)/total_time);
+    printf("Bandwith = %.6f MB/s, ", (Tries * MAX_PKT_LEN)/total_time);
+    printf("Average time per operation = %.6f us\n", total_time / Tries);
 
     total_time=0;
     total_cycles=0;
@@ -463,6 +497,168 @@ static int CheckData(u8 *base, int num_transfers, int MAX_PKT_LEN)
     }
 	return XST_SUCCESS;
 }
+
+int Store_All_DMAS(int Tries, int MAX_PKT_LEN) {
+    int Status;
+    int i, t;
+    u8 *TxBufferPtr[4];
+    int TimeOut = POLL_TIMEOUT_COUNTER;
+    u8 *RxBufferPtr[4];
+    float duration_us;
+    float duration_us_1;
+    float duration_us_2;
+    float duration_us_3;
+    float duration_us_4;
+    float saved_time=0;
+    u8 Value;
+    int Index;
+
+    RxBufferPtr[0] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0);
+    RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(1);
+    RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(2);
+    RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(3);
+
+    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[0], MAX_PKT_LEN*Tries);
+    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[1], MAX_PKT_LEN*Tries);
+    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[2], MAX_PKT_LEN*Tries);
+    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[3], MAX_PKT_LEN*Tries);
+
+    TxBufferPtr[0] = (u8 *)TX_BUFFER_BASE ;
+    TxBufferPtr[1] = (u8 *)TX_BUFFER_BASE + MAX_PKT_LEN;
+    TxBufferPtr[2] = (u8 *)TX_BUFFER_BASE + MAX_PKT_LEN*2;
+    TxBufferPtr[3] = (u8 *)TX_BUFFER_BASE + MAX_PKT_LEN*3;
+
+	Value = TEST_START_VALUE;
+
+    for (i = 0; i < 4; i ++) {
+        for (Index = 0; Index < MAX_PKT_LEN; Index ++) {
+            TxBufferPtr[i][Index] = Value;
+
+            Value = (Value + 1) & 0xFF;
+        }
+        Value = TEST_START_VALUE;
+    }
+
+
+
+    for (t = 0; t < Tries; t++) {
+
+        Status = XAxiDma_SimpleTransfer(&AxiDma[1], (UINTPTR) TxBufferPtr[0],
+						MAX_PKT_LEN, XAXIDMA_DMA_TO_DEVICE);
+
+        if (Status != XST_SUCCESS) {
+            return XST_FAILURE;
+        }
+
+        Status = XAxiDma_SimpleTransfer(&AxiDma[3], (UINTPTR) TxBufferPtr[1],
+						MAX_PKT_LEN, XAXIDMA_DMA_TO_DEVICE);
+
+        if (Status != XST_SUCCESS) {
+            return XST_FAILURE;
+        }
+
+        Status = XAxiDma_SimpleTransfer(&AxiDma[5], (UINTPTR) TxBufferPtr[2],
+						MAX_PKT_LEN, XAXIDMA_DMA_TO_DEVICE);
+
+        if (Status != XST_SUCCESS) {
+            return XST_FAILURE;
+        }
+
+        Status = XAxiDma_SimpleTransfer(&AxiDma[7], (UINTPTR) TxBufferPtr[3],
+						MAX_PKT_LEN, XAXIDMA_DMA_TO_DEVICE);
+
+        if (Status != XST_SUCCESS) {
+            return XST_FAILURE;
+        }
+        usleep(100);
+
+        XTime_GetTime(&tStart);
+        
+        XTime_GetTime(&tStart_1);
+        Status = XAxiDma_SimpleTransfer(&AxiDma[0],(UINTPTR)RxBufferPtr[0],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
+        if (Status != XST_SUCCESS) {
+            xil_printf("Transfer Failed\r\n");
+            return XST_FAILURE;
+        }
+
+        XTime_GetTime(&tStart_2);
+        Status = XAxiDma_SimpleTransfer(&AxiDma[2],(UINTPTR)RxBufferPtr[1],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
+        if (Status != XST_SUCCESS) {
+            xil_printf("Transfer Failed\r\n");
+            return XST_FAILURE;
+        }
+
+        XTime_GetTime(&tStart_3);
+        Status = XAxiDma_SimpleTransfer(&AxiDma[4],(UINTPTR)RxBufferPtr[2],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
+        if (Status != XST_SUCCESS) {
+            xil_printf("Transfer Failed\r\n");
+            return XST_FAILURE;
+        }
+
+        XTime_GetTime(&tStart_4);
+        Status = XAxiDma_SimpleTransfer(&AxiDma[6],(UINTPTR)RxBufferPtr[3],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
+        if (Status != XST_SUCCESS) {
+            xil_printf("Transfer Failed\r\n");
+            return XST_FAILURE;
+        }
+
+        // Wait until DMA is done or timeout
+        while (TimeOut) {
+            if (!(XAxiDma_Busy(&AxiDma[0], XAXIDMA_DEVICE_TO_DMA) && !(XAxiDma_Busy(&AxiDma[2], XAXIDMA_DEVICE_TO_DMA) && !(XAxiDma_Busy(&AxiDma[4], XAXIDMA_DEVICE_TO_DMA) && !(XAxiDma_Busy(&AxiDma[6], XAXIDMA_DEVICE_TO_DMA)))))) {
+                break;
+            }
+            TimeOut--;
+            usleep(1);
+        }
+        XTime_GetTime(&tEnd);
+        
+        while (TimeOut) {
+			if (!(XAxiDma_Busy(&AxiDma[1], XAXIDMA_DMA_TO_DEVICE)) && !(XAxiDma_Busy(&AxiDma[3], XAXIDMA_DMA_TO_DEVICE)) && !(XAxiDma_Busy(&AxiDma[5], XAXIDMA_DMA_TO_DEVICE))&& !(XAxiDma_Busy(&AxiDma[7], XAXIDMA_DMA_TO_DEVICE))) {
+				break;
+			}
+			TimeOut--;
+			usleep(1U);
+		}
+
+        duration_us=1.0*(tEnd- tStart) * 1000000/(COUNTS_PER_SECOND);
+        total_time += duration_us;
+        
+        duration_us_1=1.0*(tEnd- tStart_1) * 1000000/(COUNTS_PER_SECOND);
+        duration_us_2=1.0*(tEnd- tStart_2) * 1000000/(COUNTS_PER_SECOND);
+        duration_us_3=1.0*(tEnd- tStart_3) * 1000000/(COUNTS_PER_SECOND);
+        duration_us_4=1.0*(tEnd- tStart_4) * 1000000/(COUNTS_PER_SECOND);
+
+        printf("Output total took %.2f us.\n",duration_us);
+        printf("Output 1 took %.2f us.\n",duration_us_1);
+        printf("Output 2 took %.2f us.\n",duration_us_2);
+        printf("Output 3 took %.2f us.\n",duration_us_3);
+        printf("Output 4 took %.2f us.\n",duration_us_4);
+             
+
+        RxBufferPtr[0] += MAX_PKT_LEN;
+        RxBufferPtr[1] += MAX_PKT_LEN;
+        RxBufferPtr[2] += MAX_PKT_LEN;
+        RxBufferPtr[3] += MAX_PKT_LEN;
+
+        
+    }
+
+    printf("MAX_PKT_LEN = %d, ", MAX_PKT_LEN);
+    //printf("Bandwith = %.6f MB/s\n", (Tries * MAX_PKT_LEN*4)/total_time);
+    
+    printf("Total time per 4 DMA transfers = %.6f MB/s\n", total_time/Tries); 
+    printf("Time saved for 4 DMA transfers = %.6f MB/s\n", total_time/Tries); 
+    printf("Time saved between 2 DMA transfers = %.6f MB/s\n", total_time/Tries);    
+    
+    total_time=0;
+    total_cycles=0;
+
+    return XST_SUCCESS;
+}
+
+
+
+
 
 
 int Single_DMA_Pool(){
@@ -571,3 +767,114 @@ int Single_DMA_Pool(){
 
     return XST_SUCCESS;    
 }
+
+
+int All_DMA_Pool(){
+
+    int Status;
+
+    Status = Store_All_DMAS(50,32);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,64);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,128);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,256);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,512);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    
+    Status = Store_All_DMAS(50,1024);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    
+    Status = Store_All_DMAS(50,2048);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,4096);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,8192);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    
+    Status = Store_All_DMAS(50,16384);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    
+    Status = Store_All_DMAS(50,32768);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,65536);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,131072);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    /*
+    Status = Store_All_DMAS(50,262144);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,524288);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,1048576);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,1048576*2);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,1048576*4);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    Status = Store_All_DMAS(50,1048576*8);
+    if (Status != XST_SUCCESS) {
+        xil_printf("DMA transfers failed.\r\n");
+        return XST_FAILURE;
+    }
+    */
+
+    return XST_SUCCESS;    
+}
+
