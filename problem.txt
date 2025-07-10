@@ -632,8 +632,8 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
         
     }
 
-    printf("MAX_PKT_LEN = %d, \n", MAX_PKT_LEN);
-    //printf("Bandwith = %.6f MB/s\n", (Tries * MAX_PKT_LEN*4)/total_time);
+    printf("MAX_PKT_LEN = %d, ", MAX_PKT_LEN);
+    printf("Bandwith = %.6f MB/s, ", (Tries * MAX_PKT_LEN*4)/total_time);
     
     printf("Average Parallel total time for 4 DMA transfers = %.6f us\n", total_time/Tries);  
     
