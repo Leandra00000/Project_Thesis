@@ -19,9 +19,10 @@ with open("Results_1DMA.txt", "r") as file:
 # Plotting
 plt.figure(figsize=(10, 6))
 plt.plot(packet_lengths, bandwidths, marker='o', linestyle='-')
-plt.title('Bandwidth vs Packet Length')
-plt.xlabel('Packet Length')
+plt.title('Bandwidth for diferent packet length')
+plt.xlabel('Packet length')
 plt.ylabel('Bandwidth (MB/s)')
+plt.yticks([500, 1000, 1500])
 plt.grid(True)
 plt.xticks(rotation=45)
 plt.tight_layout()
