@@ -1,61 +1,9 @@
 /******************************************************************************
-* Copyright (C) 2010 - 2022 Xilinx, Inc.  All rights reserved.
-* Copyright (C) 2022 - 2023 Advanced Micro Devices, Inc.  All rights reserved.
-* SPDX-License-Identifier: MIT
+Report example (8 total DMAs)
 ******************************************************************************/
 
-/*****************************************************************************/
-/**
- *
- * @file xaxidma_example_simple_poll.c
- *
- * This file demonstrates how to use the xaxidma driver on the Xilinx AXI
- * DMA core (AXIDMA) to transfer packets in polling mode when the AXI DMA core
- * is configured in simple mode.
- *
- * This code assumes a loopback hardware widget is connected to the AXI DMA
- * core for data packet loopback.
- *
- * To see the debug print, you need a Uart16550 or uartlite in your system,
- * and please set "-DDEBUG" in your compiler options. You need to rebuild your
- * software executable.
- *
- *
- * <pre>
- * MODIFICATION HISTORY:
- *
- * Ver   Who  Date     Changes
- * ----- ---- -------- -------------------------------------------------------
- * 4.00a rkv  02/22/11 New example created for simple DMA, this example is for
- *       	       simple DMA
- * 5.00a srt  03/06/12 Added Flushing and Invalidation of Caches to fix CRs
- *		       648103, 648701.
- *		       Added V7 DDR Base Address to fix CR 649405.
- * 6.00a srt  03/27/12 Changed API calls to support MCDMA driver.
- * 7.00a srt  06/18/12 API calls are reverted back for backward compatibility.
- * 7.01a srt  11/02/12 Buffer sizes (Tx and Rx) are modified to meet maximum
- *		       DDR memory limit of the h/w system built with Area mode
- * 7.02a srt  03/01/13 Updated DDR base address for IPI designs (CR 703656).
- * 9.1   adk  01/07/16 Updated DDR base address for Ultrascale (CR 799532) and
- *		       removed the defines for S6/V6.
- * 9.3   ms   01/23/17 Modified xil_printf statement in main function to
- *                     ensure that "Successfully ran" and "Failed" strings are
- *                     available in all examples. This is a fix for CR-965028.
- *       ms   04/05/17 Modified Comment lines in functions to
- *                     recognize it as documentation block for doxygen
- *                     generation of examples.
- * 9.9   rsp  01/21/19 Fix use of #elif check in deriving DDR_BASE_ADDR.
- * 9.10  rsp  09/17/19 Fix cache maintenance ops for source and dest buffer.
- * 9.14  sk   03/08/22 Delete DDR memory limits comments as they are not
- * 		       relevant to this driver version.
- * 9.15  sa   08/12/22 Updated the example to use latest MIG cannoical define
- * 		       i.e XPAR_MIG_0_C0_DDR4_MEMORY_MAP_BASEADDR.
- * 9.16  sa   09/29/22 Fix infinite loops in the example.
- * </pre>
- *
- * ***************************************************************************
 
- */
+
 /***************************** Include Files *********************************/
 #include "xaxidma.h"
 #include "xparameters.h"
@@ -345,6 +293,147 @@ void PrintRxData(u8 *base, int num_transfers, int packet_size) {
     }
 }
 
+u32 XAxiDma_SimpleTransfer_2(XAxiDma *InstancePtr, UINTPTR BuffAddr, u32 Length,
+			   int Direction)
+{
+	u32 WordBits;
+	int RingIndex = 0;
+
+	/* If Scatter Gather is included then, cannot submit
+	 */
+	if (XAxiDma_HasSg(InstancePtr)) {
+		xdbg_printf(XDBG_DEBUG_ERROR, "Simple DMA mode is not"
+			    " supported\r\n");
+
+		return XST_FAILURE;
+	}
+
+	if (Direction == XAXIDMA_DMA_TO_DEVICE) {
+		if ((Length < 1) ||
+		    (Length > InstancePtr->TxBdRing.MaxTransferLen)) {
+			return XST_INVALID_PARAM;
+		}
+
+		if (!InstancePtr->HasMm2S) {
+			xdbg_printf(XDBG_DEBUG_ERROR, "MM2S channel is not"
+				    "supported\r\n");
+
+			return XST_FAILURE;
+		}
+
+		/* If the engine is doing transfer, cannot submit
+		 */
+
+		if (!(XAxiDma_ReadReg(InstancePtr->TxBdRing.ChanBase,
+				      XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK)) {
+			if (XAxiDma_Busy(InstancePtr, Direction)) {
+				xdbg_printf(XDBG_DEBUG_ERROR,
+					    "Engine is busy\r\n");
+				return XST_FAILURE;
+			}
+		}
+
+		if (!InstancePtr->MicroDmaMode) {
+			WordBits = (u32)((InstancePtr->TxBdRing.DataWidth) - 1);
+		} else {
+			WordBits = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
+		}
+
+		if ((BuffAddr & WordBits)) {
+
+			if (!InstancePtr->TxBdRing.HasDRE) {
+				xdbg_printf(XDBG_DEBUG_ERROR,
+					    "Unaligned transfer without"
+					    " DRE %x\r\n", (unsigned int)BuffAddr);
+
+				return XST_INVALID_PARAM;
+			}
+		}
+
+
+		XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
+				 XAXIDMA_SRCADDR_OFFSET, LOWER_32_BITS(BuffAddr));
+		if (InstancePtr->AddrWidth > 32)
+			XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
+					 XAXIDMA_SRCADDR_MSB_OFFSET,
+					 UPPER_32_BITS(BuffAddr));
+
+		XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
+				 XAXIDMA_CR_OFFSET,
+				 XAxiDma_ReadReg(
+					 InstancePtr->TxBdRing.ChanBase,
+					 XAXIDMA_CR_OFFSET) | XAXIDMA_CR_RUNSTOP_MASK);
+
+		/* Writing to the BTT register starts the transfer
+		 */
+        XTime_GetTime(&tStart);
+		XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
+				 XAXIDMA_BUFFLEN_OFFSET, Length);
+	} else if (Direction == XAXIDMA_DEVICE_TO_DMA) {
+		if ((Length < 1) ||
+		    (Length >
+		     InstancePtr->RxBdRing[RingIndex].MaxTransferLen)) {
+			return XST_INVALID_PARAM;
+		}
+
+
+		if (!InstancePtr->HasS2Mm) {
+			xdbg_printf(XDBG_DEBUG_ERROR, "S2MM channel is not"
+				    " supported\r\n");
+
+			return XST_FAILURE;
+		}
+
+		if (!(XAxiDma_ReadReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
+				      XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK)) {
+			if (XAxiDma_Busy(InstancePtr, Direction)) {
+				xdbg_printf(XDBG_DEBUG_ERROR,
+					    "Engine is busy\r\n");
+				return XST_FAILURE;
+			}
+		}
+
+		if (!InstancePtr->MicroDmaMode) {
+			WordBits =
+				(u32)((InstancePtr->RxBdRing[RingIndex].DataWidth) - 1);
+		} else {
+			WordBits = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
+		}
+
+		if ((BuffAddr & WordBits)) {
+
+			if (!InstancePtr->RxBdRing[RingIndex].HasDRE) {
+				xdbg_printf(XDBG_DEBUG_ERROR,
+					    "Unaligned transfer without"
+					    " DRE %x\r\n", (unsigned int)BuffAddr);
+
+				return XST_INVALID_PARAM;
+			}
+		}
+
+        //XTime_GetTime(&tStart);        
+		XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
+				 XAXIDMA_DESTADDR_OFFSET, LOWER_32_BITS(BuffAddr));
+		if (InstancePtr->AddrWidth > 32)
+			XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
+					 XAXIDMA_DESTADDR_MSB_OFFSET,
+					 UPPER_32_BITS(BuffAddr));
+
+		XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
+				 XAXIDMA_CR_OFFSET,
+				 XAxiDma_ReadReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
+						 XAXIDMA_CR_OFFSET) | XAXIDMA_CR_RUNSTOP_MASK);
+		/* Writing to the BTT register starts the transfer
+		 */
+         
+		XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
+				 XAXIDMA_BUFFLEN_OFFSET, Length);
+        //XTime_GetTime(&tEnd);
+	}
+
+	return XST_SUCCESS;
+}
+
 /*****************************************************************************/
 /**
 * The example to do the simple transfer through polling. The constant
@@ -404,20 +493,16 @@ int XAxiDma_SimplePollExample(int Dma_read, int Dma_store, int Tries, int MAX_PK
         XTime_GetTime(&tStart);
 		Status = XAxiDma_SimpleTransfer(&AxiDma[Dma_store], (UINTPTR) RxBufferPtr,
 						MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-
+        //XTime_GetTime(&tEnd);
+        //XTime_GetTime(&tStart);
 		if (Status != XST_SUCCESS) {
 			return XST_FAILURE;
-		}
-                        
+		}         
 
-		/*Wait till tranfer is done or 1usec * 10^6 iterations of timeout occurs*/
-		while (TimeOut) {
-			if (!(XAxiDma_Busy(&AxiDma[Dma_store], XAXIDMA_DEVICE_TO_DMA))){
-				break;
-			}
-			TimeOut--;
-			usleep(1U);
+		while ((XAxiDma_Busy(&AxiDma[Dma_store], XAXIDMA_DEVICE_TO_DMA))) {
+
 		}
+        
         XTime_GetTime(&tEnd);
 
         while (TimeOut) {
@@ -601,7 +686,7 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
         }
 
         // Wait until DMA is done or timeout
-        while (TimeOut) {
+        while (1) {
             if (!XAxiDma_Busy(&AxiDma[0], XAXIDMA_DEVICE_TO_DMA) &&
                 !XAxiDma_Busy(&AxiDma[2], XAXIDMA_DEVICE_TO_DMA) &&
                 !XAxiDma_Busy(&AxiDma[4], XAXIDMA_DEVICE_TO_DMA) &&
@@ -612,9 +697,6 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
                 !XAxiDma_Busy(&AxiDma[7], XAXIDMA_DMA_TO_DEVICE)) {
                 break;
             }
-
-            TimeOut--;
-            usleep(1);
         }
         
         
