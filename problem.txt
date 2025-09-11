@@ -1,5 +1,5 @@
 /******************************************************************************
-Report example (8 total DMAs)
+Report example (8 total DMAs) (150MHz)
 ******************************************************************************/
 
 
@@ -72,6 +72,7 @@ DEFAULT SET TO 0x01000000
 
 #define NUMBER_OF_TRANSFERS	10
 #define POLL_TIMEOUT_COUNTER    1000000U
+#define PARALLEL FALSE
 
 /**************************** Type Definitions *******************************/
 
@@ -293,146 +294,6 @@ void PrintRxData(u8 *base, int num_transfers, int packet_size) {
     }
 }
 
-u32 XAxiDma_SimpleTransfer_2(XAxiDma *InstancePtr, UINTPTR BuffAddr, u32 Length,
-			   int Direction)
-{
-	u32 WordBits;
-	int RingIndex = 0;
-
-	/* If Scatter Gather is included then, cannot submit
-	 */
-	if (XAxiDma_HasSg(InstancePtr)) {
-		xdbg_printf(XDBG_DEBUG_ERROR, "Simple DMA mode is not"
-			    " supported\r\n");
-
-		return XST_FAILURE;
-	}
-
-	if (Direction == XAXIDMA_DMA_TO_DEVICE) {
-		if ((Length < 1) ||
-		    (Length > InstancePtr->TxBdRing.MaxTransferLen)) {
-			return XST_INVALID_PARAM;
-		}
-
-		if (!InstancePtr->HasMm2S) {
-			xdbg_printf(XDBG_DEBUG_ERROR, "MM2S channel is not"
-				    "supported\r\n");
-
-			return XST_FAILURE;
-		}
-
-		/* If the engine is doing transfer, cannot submit
-		 */
-
-		if (!(XAxiDma_ReadReg(InstancePtr->TxBdRing.ChanBase,
-				      XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK)) {
-			if (XAxiDma_Busy(InstancePtr, Direction)) {
-				xdbg_printf(XDBG_DEBUG_ERROR,
-					    "Engine is busy\r\n");
-				return XST_FAILURE;
-			}
-		}
-
-		if (!InstancePtr->MicroDmaMode) {
-			WordBits = (u32)((InstancePtr->TxBdRing.DataWidth) - 1);
-		} else {
-			WordBits = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
-		}
-
-		if ((BuffAddr & WordBits)) {
-
-			if (!InstancePtr->TxBdRing.HasDRE) {
-				xdbg_printf(XDBG_DEBUG_ERROR,
-					    "Unaligned transfer without"
-					    " DRE %x\r\n", (unsigned int)BuffAddr);
-
-				return XST_INVALID_PARAM;
-			}
-		}
-
-
-		XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
-				 XAXIDMA_SRCADDR_OFFSET, LOWER_32_BITS(BuffAddr));
-		if (InstancePtr->AddrWidth > 32)
-			XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
-					 XAXIDMA_SRCADDR_MSB_OFFSET,
-					 UPPER_32_BITS(BuffAddr));
-
-		XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
-				 XAXIDMA_CR_OFFSET,
-				 XAxiDma_ReadReg(
-					 InstancePtr->TxBdRing.ChanBase,
-					 XAXIDMA_CR_OFFSET) | XAXIDMA_CR_RUNSTOP_MASK);
-
-		/* Writing to the BTT register starts the transfer
-		 */
-        XTime_GetTime(&tStart);
-		XAxiDma_WriteReg(InstancePtr->TxBdRing.ChanBase,
-				 XAXIDMA_BUFFLEN_OFFSET, Length);
-	} else if (Direction == XAXIDMA_DEVICE_TO_DMA) {
-		if ((Length < 1) ||
-		    (Length >
-		     InstancePtr->RxBdRing[RingIndex].MaxTransferLen)) {
-			return XST_INVALID_PARAM;
-		}
-
-
-		if (!InstancePtr->HasS2Mm) {
-			xdbg_printf(XDBG_DEBUG_ERROR, "S2MM channel is not"
-				    " supported\r\n");
-
-			return XST_FAILURE;
-		}
-
-		if (!(XAxiDma_ReadReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
-				      XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK)) {
-			if (XAxiDma_Busy(InstancePtr, Direction)) {
-				xdbg_printf(XDBG_DEBUG_ERROR,
-					    "Engine is busy\r\n");
-				return XST_FAILURE;
-			}
-		}
-
-		if (!InstancePtr->MicroDmaMode) {
-			WordBits =
-				(u32)((InstancePtr->RxBdRing[RingIndex].DataWidth) - 1);
-		} else {
-			WordBits = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
-		}
-
-		if ((BuffAddr & WordBits)) {
-
-			if (!InstancePtr->RxBdRing[RingIndex].HasDRE) {
-				xdbg_printf(XDBG_DEBUG_ERROR,
-					    "Unaligned transfer without"
-					    " DRE %x\r\n", (unsigned int)BuffAddr);
-
-				return XST_INVALID_PARAM;
-			}
-		}
-
-        //XTime_GetTime(&tStart);        
-		XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
-				 XAXIDMA_DESTADDR_OFFSET, LOWER_32_BITS(BuffAddr));
-		if (InstancePtr->AddrWidth > 32)
-			XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
-					 XAXIDMA_DESTADDR_MSB_OFFSET,
-					 UPPER_32_BITS(BuffAddr));
-
-		XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
-				 XAXIDMA_CR_OFFSET,
-				 XAxiDma_ReadReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
-						 XAXIDMA_CR_OFFSET) | XAXIDMA_CR_RUNSTOP_MASK);
-		/* Writing to the BTT register starts the transfer
-		 */
-         
-		XAxiDma_WriteReg(InstancePtr->RxBdRing[RingIndex].ChanBase,
-				 XAXIDMA_BUFFLEN_OFFSET, Length);
-        //XTime_GetTime(&tEnd);
-	}
-
-	return XST_SUCCESS;
-}
 
 /*****************************************************************************/
 /**
@@ -600,10 +461,17 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
     u8 Value;
     int Index;
 
-    RxBufferPtr[0] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0);
-    RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(1);
-    RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(2);
-    RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(3);
+    if (PARALLEL)  {
+        RxBufferPtr[0] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0);
+        RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(1);
+        RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(2);
+        RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(3);
+    }else {
+        RxBufferPtr[0] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0);
+        RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0) + MAX_PKT_LEN;
+        RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0) +(MAX_PKT_LEN*2);
+        RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0) + (MAX_PKT_LEN*3);
+    }  
 
     Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[0], MAX_PKT_LEN*Tries);
     Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[1], MAX_PKT_LEN*Tries);
@@ -705,12 +573,18 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
 
         duration_us=1.0*(tEnd- tStart) * 1000000/(COUNTS_PER_SECOND);
         total_time += duration_us;
-
-        RxBufferPtr[0] += MAX_PKT_LEN;
-        RxBufferPtr[1] += MAX_PKT_LEN;
-        RxBufferPtr[2] += MAX_PKT_LEN;
-        RxBufferPtr[3] += MAX_PKT_LEN;
-
+        if (PARALLEL)  {
+            RxBufferPtr[0] += MAX_PKT_LEN;
+            RxBufferPtr[1] += MAX_PKT_LEN;
+            RxBufferPtr[2] += MAX_PKT_LEN;
+            RxBufferPtr[3] += MAX_PKT_LEN;
+        }else {
+            RxBufferPtr[0] += MAX_PKT_LEN*4;
+            RxBufferPtr[1] += MAX_PKT_LEN*5;
+            RxBufferPtr[2] += MAX_PKT_LEN*6;
+            RxBufferPtr[3] += MAX_PKT_LEN*7;
+        
+        }
         
     }
 
