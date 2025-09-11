@@ -6,11 +6,11 @@ entity FIFO_stream is
 	generic (
 		-- Users to add parameters here
         DATA_WIDTH : integer := 8;  -- Bit-width of each FIFO entry
-        FIFO_DEPTH : integer := 512;  -- Number of entries in the FIFO
+        FIFO_DEPTH : integer := 128;  -- Number of entries in the FIFO
 
         RMAP_DECODER: std_logic:='0';
 
-
+        THERESHOLD : integer := 0; --Number of bytes need to start transfering
 		-- User parameters ends
 		-- Do not modify the parameters beyond this line
 
@@ -19,7 +19,7 @@ entity FIFO_stream is
 		-- Start count is the number of clock cycles the master will wait before initiating/issuing any transaction.
 		C_M_START_COUNT	: integer	:= 1;
 		-- Total number of output data                                              
-	    NUMBER_OF_OUTPUT_WORDS : integer := 32  
+	    NUMBER_OF_OUTPUT_WORDS : integer := 8192  
 	);
 	port (
 		-- Users to add ports here
@@ -30,7 +30,7 @@ entity FIFO_stream is
         full     : out std_logic;                      -- FIFO full flag
         empty    : out std_logic;                       -- FIFO empty flag
         Rx_Rd_n     : out std_logic;
-        
+        FIFO_Count     : out std_logic_vector(10 downto 0);
         
 		-- User ports ends
 		-- Do not modify the ports beyond this line
@@ -98,9 +98,7 @@ architecture Behavioral of FIFO_stream is
 	-- In this example, Depth of FIFO is determined by the greater of                 
 	-- the number of input words and output words.                                    
 	constant depth : integer := NUMBER_OF_OUTPUT_WORDS*2;                               
-	                                                                                  
-	-- bit_num gives the minimum number of bits needed to address 'depth' size of FIFO
-	constant bit_num : integer := clogb2(depth);                                      
+	                                                                                                                    
 	                                                                                  
 	-- Define the states of state machine                                             
 	-- The control state machine oversees the writing of input streaming data to the FIFO,
@@ -201,7 +199,7 @@ begin
 	-- AXI tlast generation                                                                        
 	-- axis_tlast is asserted number of output streaming data is NUMBER_OF_OUTPUT_WORDS-1          
 	-- (0 to NUMBER_OF_OUTPUT_WORDS-1)                                                             
-	axis_tlast <= '1' when (read_pointer = NUMBER_OF_OUTPUT_WORDS-1) else '0';                     
+	axis_tlast <= '1' when ((read_pointer = NUMBER_OF_OUTPUT_WORDS-1) and enough_data='1') else '0';                     
 	                                                                                               
 	-- Delay the axis_tvalid and axis_tlast signal by one clock cycle                              
 	-- to match the latency of M_AXIS_TDATA                                                        
@@ -285,93 +283,135 @@ begin
     
 
     -- FIFO control process
-    process (clk, reset_n)
-    begin
-        if rising_edge(clk) then
-            if(reset_n = '0') then
-                fifo_reg   <= (others => (others => '0'));  
-                write_ptr  <= 0;                                                        
-                count_fifo      <= 0;                            
-                full_sig   <= '0';                          
-                empty_sig  <= '1';      
-                Rx_Rd_n <= '1'; 
-                current_state_fifo_write <=IDLE;
-                enough_data <='0'; 
-            else
-                case(current_state_fifo_write) is                
-                    when IDLE =>                 
-                        if write_en = '1' and full_sig = '0' then
-                            current_state_fifo_write <= GET_DATA;
-                            Rx_Rd_n <= '0';
-                        else
-                            current_state_fifo_write <= IDLE;
-                            Rx_Rd_n <= '1';
-                        end if; 
-                                         
-                    when GET_DATA =>
-                        Rx_Rd_n <= '1';
-                        if RMAP_DECODER='1' then   --RMAP DECODER               
-                            rmap_counter <= rmap_counter+1;
-                            if rmap_counter >= 531 then
-                                rmap_counter <= 0;
-                            elsif rmap_counter >= 17+4 then
-                            
-                                fifo_reg(write_ptr) <= data_in_Rx(7 downto 0);           
-                                if write_ptr = FIFO_DEPTH-1 then
-                                    write_ptr <= 0;                     
-                                else
-                                    write_ptr <= write_ptr + 1;         
-                                end if;
-                                count_fifo <= count_fifo + 1;
-                            end if;            
-                        else                        --WITHOUT RMAP  
-                            fifo_reg(write_ptr) <= data_in_Rx(7 downto 0);       
+process (clk, reset_n)
+    variable next_count_fifo : integer range 0 to FIFO_DEPTH := 0;
+begin
+    if rising_edge(clk) then
+        if(reset_n = '0') then
+            fifo_reg   <= (others => (others => '0'));  
+            write_ptr  <= 0;                                                        
+            count_fifo <= 0;                            
+            full_sig   <= '0';                          
+            empty_sig  <= '1';      
+            Rx_Rd_n    <= '1'; 
+            current_state_fifo_write <= IDLE;
+            enough_data <= '0'; 
+            rmap_counter <= 0;
+
+        else
+            ----------------------------------------------------------------
+            -- FIFO FSM with integrated count update
+            ----------------------------------------------------------------
+            case current_state_fifo_write is                
+                ----------------------------------------------------------------
+                when IDLE =>                 
+                    Rx_Rd_n <= '1';
+
+                    -- TX only (no new write)
+                    if tx_en = '1' then
+                        next_count_fifo := count_fifo - (C_M_AXIS_TDATA_WIDTH / DATA_WIDTH);
+                    else
+                        next_count_fifo := count_fifo;
+                    end if;
+
+                    if write_en = '1' and full_sig = '0' then
+                        current_state_fifo_write <= GET_DATA;
+                        Rx_Rd_n <= '0';
+                    else
+                        current_state_fifo_write <= IDLE;
+                    end if; 
+                                     
+                ----------------------------------------------------------------
+                when GET_DATA =>
+                    Rx_Rd_n <= '1';
+
+                    if RMAP_DECODER = '1' then   -- RMAP DECODER               
+                        rmap_counter <= rmap_counter+1;
+
+                        if rmap_counter >= 531 then
+                            rmap_counter <= 0;
+
+                        elsif rmap_counter >= 21 then  -- 17+4 offset
+                            fifo_reg(write_ptr) <= data_in_Rx(7 downto 0);           
                             if write_ptr = FIFO_DEPTH-1 then
                                 write_ptr <= 0;                     
                             else
                                 write_ptr <= write_ptr + 1;         
                             end if;
-                            count_fifo <= count_fifo + 1; 
-                            
+
+                            if tx_en = '1' then
+                                next_count_fifo := count_fifo + 1 - (C_M_AXIS_TDATA_WIDTH / DATA_WIDTH);
+                            else
+                                next_count_fifo := count_fifo + 1;
+                            end if;
+                        else
+                            -- just counting RMAP header, no data write
+                            if tx_en = '1' then
+                                next_count_fifo := count_fifo - (C_M_AXIS_TDATA_WIDTH / DATA_WIDTH);
+                            else
+                                next_count_fifo := count_fifo;
+                            end if;
                         end if;
-                        
-                        current_state_fifo_write <= IDLE;
-                        
-                    when others =>
-                        current_state_fifo_write <= IDLE;
-                    
-                end case;     
-                
-                --Update amount of data from this FIFO
-                if current_state_fifo_write = GET_DATA and tx_en = '1' then
-                    count_fifo <= count_fifo + 1 - C_M_AXIS_TDATA_WIDTH/DATA_WIDTH;
-                elsif current_state_fifo_write = GET_DATA and tx_en = '0' and (RMAP_DECODER='0' or (RMAP_DECODER='1' and  rmap_counter >= 17+4 and rmap_counter < 531)) then
-                    count_fifo <= count_fifo + 1;
-                elsif tx_en = '1' then
-                    count_fifo <= count_fifo - C_M_AXIS_TDATA_WIDTH/DATA_WIDTH;
-                end if;
-                
-                --Check if enought data to send
-                if read_pointer = NUMBER_OF_OUTPUT_WORDS then
-                    enough_data <='0';  
-                elsif count_fifo >= NUMBER_OF_OUTPUT_WORDS*C_M_AXIS_TDATA_WIDTH/DATA_WIDTH then
-                    enough_data <='1';          
-                end if;      
-    
-                -- Update full and empty flags
-                if count_fifo = FIFO_DEPTH then
-                    full_sig  <= '1';                       
-                    empty_sig <= '0';                         
-                elsif count_fifo = 0 then
-                    full_sig  <= '0';                       
-                    empty_sig <= '1';                       
-                else
-                    full_sig  <= '0';                       
-                    empty_sig <= '0';                        
-                end if;
+
+                    else                        -- WITHOUT RMAP  
+                        fifo_reg(write_ptr) <= data_in_Rx(7 downto 0);       
+                        if write_ptr = FIFO_DEPTH-1 then
+                            write_ptr <= 0;                     
+                        else
+                            write_ptr <= write_ptr + 1;         
+                        end if;
+
+                        if tx_en = '1' then
+                            next_count_fifo := count_fifo + 1 - (C_M_AXIS_TDATA_WIDTH / DATA_WIDTH);
+                        else
+                            next_count_fifo := count_fifo + 1;
+                        end if;
+                    end if;
+
+                    current_state_fifo_write <= IDLE;
+
+                ----------------------------------------------------------------
+                when others =>
+                    current_state_fifo_write <= IDLE;
+                    next_count_fifo := count_fifo;
+            end case;     
+
+            ----------------------------------------------------------------
+            -- Threshold / enough_data latch logic
+            ----------------------------------------------------------------
+            if enough_data = '1' and axis_tlast = '1' then
+                enough_data <= '0';  
+            elsif enough_data = '1' and next_count_fifo < (C_M_AXIS_TDATA_WIDTH / DATA_WIDTH) then
+                enough_data <= '0';
+            elsif enough_data = '0' and next_count_fifo >= THERESHOLD and next_count_fifo >= (C_M_AXIS_TDATA_WIDTH / DATA_WIDTH) then
+                enough_data <= '1';          
+            else
+                enough_data <= enough_data;
             end if;
+
+            ----------------------------------------------------------------
+            -- Full / Empty flag update
+            ----------------------------------------------------------------
+            if next_count_fifo = FIFO_DEPTH then
+                full_sig  <= '1';                       
+                empty_sig <= '0';                         
+            elsif next_count_fifo = 0 then
+                full_sig  <= '0';                       
+                empty_sig <= '1';                       
+            else
+                full_sig  <= '0';                       
+                empty_sig <= '0';                        
+            end if;
+
+            ----------------------------------------------------------------
+            -- Register update
+            ----------------------------------------------------------------
+            count_fifo <= next_count_fifo;
+            FIFO_Count <= std_logic_vector(to_unsigned(next_count_fifo, FIFO_Count'length));
+
         end if;
-    end process;
+    end if;
+end process;
 
 	-- User logic ends
 
