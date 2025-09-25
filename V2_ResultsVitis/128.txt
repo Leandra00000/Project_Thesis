@@ -1,8 +1,0 @@
-MAX_PKT_LEN = 128
-Transfers performed = 100
-Total time = 297.020111 us
-Average time per operation = 2.970201 us
-Average time per Byte = 0.023205 us
-Average cycles per Byte = 4.640937 cycles
-Bandwith = 43.094727 MB/s
-Successfully ran XAxiDma_SimplePoll Example

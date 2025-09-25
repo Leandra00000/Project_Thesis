@@ -1,7 +1,0 @@
-AX_PKT_LEN = 1024
-Transfers performed = 50
-Total time = 148.600037 us
-Average time per operation = 2.972001 us
-Average time per Byte = 0.002902 us
-Average cycles per Byte = 0.580469 cycles
-Bandwith = 344.549042 MB/s
