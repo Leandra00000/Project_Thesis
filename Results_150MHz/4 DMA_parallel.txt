@@ -1,0 +1,13 @@
+MAX_PKT_LEN = 32, Bandwith = 21.912546 MB/s, Average Parallel total time for 4 DMA transfers = 5.841403 us
+MAX_PKT_LEN = 64, Bandwith = 43.765156 MB/s, Average Parallel total time for 4 DMA transfers = 5.849402 us
+MAX_PKT_LEN = 128, Bandwith = 87.530312 MB/s, Average Parallel total time for 4 DMA transfers = 5.849402 us
+MAX_PKT_LEN = 256, Bandwith = 175.048630 MB/s, Average Parallel total time for 4 DMA transfers = 5.849803 us
+MAX_PKT_LEN = 512, Bandwith = 350.085297 MB/s, Average Parallel total time for 4 DMA transfers = 5.850003 us
+MAX_PKT_LEN = 1024, Bandwith = 615.810425 MB/s, Average Parallel total time for 4 DMA transfers = 6.651398 us
+MAX_PKT_LEN = 2048, Bandwith = 1231.769165 MB/s, Average Parallel total time for 4 DMA transfers = 6.650597 us
+MAX_PKT_LEN = 4096, Bandwith = 2086.123535 MB/s, Average Parallel total time for 4 DMA transfers = 7.853802 us
+MAX_PKT_LEN = 8192, Bandwith = 3469.641846 MB/s, Average Parallel total time for 4 DMA transfers = 9.444202 us
+MAX_PKT_LEN = 16384, Bandwith = 5083.858887 MB/s, Average Parallel total time for 4 DMA transfers = 12.890995 us
+MAX_PKT_LEN = 32768, Bandwith = 5480.148926 MB/s, Average Parallel total time for 4 DMA transfers = 23.917597 us
+MAX_PKT_LEN = 65536, Bandwith = 4802.473633 MB/s, Average Parallel total time for 4 DMA transfers = 54.585205 us
+MAX_PKT_LEN = 131072, Bandwith = 4903.718262 MB/s, Average Parallel total time for 4 DMA transfers = 106.916412 us
