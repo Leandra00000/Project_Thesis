@@ -1,59 +1,7 @@
 /******************************************************************************
-Full System without optimization (With a single starter) (150 MHz)
+Data Handler Architecture with a Single Compression Unit (With a single starter) (150 MHz)
 ******************************************************************************/
 
-/*****************************************************************************/
-/**
- *
- * @file xaxidma_example_simple_poll.c
- *
- * This file demonstrates how to use the xaxidma driver on the Xilinx AXI
- * DMA core (AXIDMA) to transfer packets in polling mode when the AXI DMA core
- * is configured in simple mode.
- *
- * This code assumes a loopback hardware widget is connected to the AXI DMA
- * core for data packet loopback.
- *
- * To see the debug print, you need a Uart16550 or uartlite in your system,
- * and please set "-DDEBUG" in your compiler options. You need to rebuild your
- * software executable.
- *
- *
- * <pre>
- * MODIFICATION HISTORY:
- *
- * Ver   Who  Date     Changes
- * ----- ---- -------- -------------------------------------------------------
- * 4.00a rkv  02/22/11 New example created for simple DMA, this example is for
- *       	       simple DMA
- * 5.00a srt  03/06/12 Added Flushing and Invalidation of Caches to fix CRs
- *		       648103, 648701.
- *		       Added V7 DDR Base Address to fix CR 649405.
- * 6.00a srt  03/27/12 Changed API calls to support MCDMA driver.
- * 7.00a srt  06/18/12 API calls are reverted back for backward compatibility.
- * 7.01a srt  11/02/12 Buffer sizes (Tx and Rx) are modified to meet maximum
- *		       DDR memory limit of the h/w system built with Area mode
- * 7.02a srt  03/01/13 Updated DDR base address for IPI designs (CR 703656).
- * 9.1   adk  01/07/16 Updated DDR base address for Ultrascale (CR 799532) and
- *		       removed the defines for S6/V6.
- * 9.3   ms   01/23/17 Modified xil_printf statement in main function to
- *                     ensure that "Successfully ran" and "Failed" strings are
- *                     available in all examples. This is a fix for CR-965028.
- *       ms   04/05/17 Modified Comment lines in functions to
- *                     recognize it as documentation block for doxygen
- *                     generation of examples.
- * 9.9   rsp  01/21/19 Fix use of #elif check in deriving DDR_BASE_ADDR.
- * 9.10  rsp  09/17/19 Fix cache maintenance ops for source and dest buffer.
- * 9.14  sk   03/08/22 Delete DDR memory limits comments as they are not
- * 		       relevant to this driver version.
- * 9.15  sa   08/12/22 Updated the example to use latest MIG cannoical define
- * 		       i.e XPAR_MIG_0_C0_DDR4_MEMORY_MAP_BASEADDR.
- * 9.16  sa   09/29/22 Fix infinite loops in the example.
- * </pre>
- *
- * ***************************************************************************
-
- */
 /***************************** Include Files *********************************/
 #include "xaxidma.h"
 #include "xparameters.h"
@@ -78,7 +26,6 @@ Full System without optimization (With a single starter) (150 MHz)
 #define DMA_DEV_ID_2 XPAR_AXIDMA_2_DEVICE_ID
 #define DMA_DEV_ID_3 XPAR_AXIDMA_3_DEVICE_ID
 #define DMA_DEV_ID_4 XPAR_AXIDMA_4_DEVICE_ID
-#define DMA_DEV_ID_5 XPAR_AXIDMA_5_DEVICE_ID
 
 #ifdef XPAR_AXI_7SDDR_0_S_AXI_BASEADDR
 #define DDR_BASE_ADDR		XPAR_AXI_7SDDR_0_S_AXI_BASEADDR
@@ -111,7 +58,7 @@ DEFAULT SET TO 0x01000000
 
 #define RX_TOTAL_SIZE       0x40000000U       // 1GB
 //#define RX_TOTAL_SIZE  (16 * 1024)  // 16 KB = 16 × 1024 bytes     
-#define RX_DMA_COUNT        4 //Compressor
+#define RX_DMA_COUNT        4 
 #define RX_PER_DMA_SIZE     (RX_TOTAL_SIZE / RX_DMA_COUNT)  // 0x20000000 = 256MB
 
 #define RX_BUFFER_BASE_4(i)   ((MEM_BASE_ADDR + ((i) * RX_PER_DMA_SIZE)))
@@ -122,11 +69,10 @@ DEFAULT SET TO 0x01000000
 
 #define TEST_START_VALUE	0xC
 
-#define NUMBER_OF_TRANSFERS	10
 #define POLL_TIMEOUT_COUNTER    1000000U
 
-#define SIZE_OF_IMAGE 8388608 // (8MB, 2048x2048x2Bytes)
-#define NUMBER_OF_IMAGES_PER_DMA 2 // (8MB, 2048x2048x2Bytes)
+#define SIZE_OF_IMAGE 8388608//1024//8388608 // (8MB, 2048x2048x2Bytes)
+#define NUMBER_OF_IMAGES_PER_DMA 10 // (8MB, 2048x2048x2Bytes)
 
 /**************************** Type Definitions *******************************/
 
@@ -140,29 +86,41 @@ DEFAULT SET TO 0x01000000
 extern void xil_printf(const char *format, ...);
 #endif
 
-
-int XAxiDma_SimplePollExample(int Dma_read, int Dma_store, int Tries, int MAX_PKT_LEN);
-int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN);
+int Store_Images(int Tries, int MAX_PKT_LEN);
 int Compression();
 
 
 /************************** Variable Definitions *****************************/
-/*
- * Device instance definitions
- */
-XAxiDma AxiDma[5];
-XTime tStart, tEnd;
-float total_time=0;
-int total_cycles=0;
 
+// 4 DMAs for memory transfer (0-3) and 1 for Compression (4)
+XAxiDma AxiDma[5];   
+
+//Stores the starting position on memory and the number of bytes stored
 struct ImagesPosition{
     u8 *StartingPtr;
     int NumBytes;    
 };
 
-struct ImagesPosition TableOfImages[NUMBER_OF_IMAGES_PER_DMA*4];
-int NumOfImagesOnTable=0;
+struct ImagesPosition TableOfImages[NUMBER_OF_IMAGES_PER_DMA*4];  // Vector of images
+int NumOfImagesOnTable=0; 
 
+
+
+
+
+/************************** Functions ****************************************/
+
+
+
+/*****************************************************************************/
+/**
+* Initializes a DMA in simple mode with no interruptors
+*
+* @return
+*		- XST_SUCCESS if example finishes successfully
+*		- XST_FAILURE if example fails.
+*
+******************************************************************************/
 #ifndef SDT
 int XAxiDma_Initialization(u16 DeviceId, int DMA)
 #else
@@ -229,50 +187,53 @@ int XAxiDma_Initialization(UINTPTR BaseAddress, int DMA)
 ******************************************************************************/
 int main()
 {
-	int Status,Status0,Status1,Status2,Status3,Status4;
+	int Status[RX_DMA_COUNT+1];
 
 
 	xil_printf("\r\n--- Entering main() --- \r\n");
 
-	/* Run the poll example for simple transfer */
 #ifndef SDT
-	Status0 = XAxiDma_Initialization(DMA_DEV_ID_0,0);
-    Status1 = XAxiDma_Initialization(DMA_DEV_ID_1,1);
-    Status2 = XAxiDma_Initialization(DMA_DEV_ID_2,2);
-    Status3 = XAxiDma_Initialization(DMA_DEV_ID_3,3);
-    Status4 = XAxiDma_Initialization(DMA_DEV_ID_4,4);
+	Status[0] = XAxiDma_Initialization(DMA_DEV_ID_0,0);
+    Status[1]= XAxiDma_Initialization(DMA_DEV_ID_1,1);
+    Status[2] = XAxiDma_Initialization(DMA_DEV_ID_2,2);
+    Status[3] = XAxiDma_Initialization(DMA_DEV_ID_3,3);
+    Status[4] = XAxiDma_Initialization(DMA_DEV_ID_4,4);
     
 #else
-	Status0 = XAxiDma_Initialization(XPAR_XAXIDMA_0_BASEADDR,0);
-    Status1 = XAxiDma_Initialization(XPAR_XAXIDMA_1_BASEADDR,1);
-    Status2 = XAxiDma_Initialization(XPAR_XAXIDMA_2_BASEADDR,2);
-    Status3 = XAxiDma_Initialization(XPAR_XAXIDMA_3_BASEADDR,3);
-    Status4 = XAxiDma_Initialization(XPAR_XAXIDMA_4_BASEADDR,4); //Compressor
+	Status[0] = XAxiDma_Initialization(XPAR_XAXIDMA_0_BASEADDR,0);
+    Status[1] = XAxiDma_Initialization(XPAR_XAXIDMA_1_BASEADDR,1);
+    Status[2] = XAxiDma_Initialization(XPAR_XAXIDMA_2_BASEADDR,2);
+    Status[3] = XAxiDma_Initialization(XPAR_XAXIDMA_3_BASEADDR,3);
+    Status[4] = XAxiDma_Initialization(XPAR_XAXIDMA_4_BASEADDR,4); //Compressor
     
     
 #endif
 
-	if (Status0 != XST_SUCCESS || Status1 != XST_SUCCESS || Status2 != XST_SUCCESS || Status3 != XST_SUCCESS || Status4 != XST_SUCCESS) {
-		xil_printf("XAxiDma_SimplePoll Example Failed\r\n");
-		return XST_FAILURE;
-	}
+    //Verify if initialization was successful
+    for (int i=0; i<RX_DMA_COUNT+1; i++){
+        if (Status[i] != XST_SUCCESS){
+            xil_printf("Failed to Initialize DMA %d\r\n", i);
+		    return XST_FAILURE;            
+        }
+    }
    
-
-    Status= Store_All_DMAS_parallel(NUMBER_OF_IMAGES_PER_DMA*SIZE_OF_IMAGE/128,128);
-    if (Status != XST_SUCCESS) {
+    //Storing
+    xil_printf("Entering Storing\r\n");
+    Status[0]= Store_Images(NUMBER_OF_IMAGES_PER_DMA*SIZE_OF_IMAGE/128,128);
+    if (Status[0] != XST_SUCCESS) {
         xil_printf("DMA transfers failed.\r\n");
         return XST_FAILURE;
     }
 
-    Status= Compression();
-    if (Status != XST_SUCCESS) {
-        xil_printf("DMA transfers failed Compression.\r\n");
+    //Compression
+    xil_printf("Entering Compression\r\n");
+    Status[0]= Compression();
+    if (Status[0] != XST_SUCCESS) {
+        xil_printf("DMA transfer failed Compression.\r\n");
         return XST_FAILURE;
     }
 
-	xil_printf("Successfully ran XAxiDma_SimplePoll Example\r\n");
-
-	xil_printf("--- Exiting main() --- \r\n");
+	xil_printf("Successfull Execution\r\n");
 
 	return XST_SUCCESS;
 
@@ -305,6 +266,27 @@ static void Uart550_Setup(void)
 }
 #endif
 
+
+/*****************************************************************************/
+/**
+ * Prints the contents of a DMA receive buffer in hexadecimal format.
+ *
+ * This function iterates through the received DMA buffer memory and prints
+ * each packet's contents for debugging or verification purposes. Each packet
+ * is printed in a structured format, showing 16 bytes per line.
+ *
+ * @param	base             Pointer to the start of the DMA buffer.
+ * @param	num_transfers    Number of packet transfers to print.
+ * @param	packet_size      Size (in bytes) of each DMA packet.
+ * @param	num_DMA          DMA channel index (used only for display labeling).
+ *
+ * @return	None.
+ *
+ * @note
+ *  - This function is intended for debugging.
+ *  - The function assumes linear contiguous memory for the DMA buffer!
+ *
+ ******************************************************************************/
 void PrintRxData(u8 *base, int num_transfers, int packet_size, int num_DMA) {
     xil_printf("\n--- DMA Buffer Contents %d ---\n", num_DMA);
     for (int i = 0; i < num_transfers; i++) {
@@ -319,52 +301,56 @@ void PrintRxData(u8 *base, int num_transfers, int packet_size, int num_DMA) {
 }
 
 
-
-int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
+/*****************************************************************************/
+/**
+ * Performs multiple parallel DMA transfers from the FPGA to DDR memory.
+ *
+ * This function coordinates multiple AXI DMA engines to simultaneously
+ * transfer data from the FPGA into pre-defined DDR memory regions.
+ * Each DMA channel writes to a distinct memory segment. 
+ *
+ * @param   num_transfers   Number of DMA transfers to perform per channel.
+ * @param   MAX_PKT_LEN     Size (in bytes) of each transfer packet.
+ *
+ * @return
+ *          - XST_SUCCESS if all transfers complete successfully.
+ *          - XST_FAILURE if any DMA transfer initialization fails.
+ *
+ * @note
+ *  - Each DMA channel must have been initialized prior to calling this function.
+ *
+ ******************************************************************************/
+int Store_Images(int num_transfers, int MAX_PKT_LEN) {
     int Status;
-    int t;
-    int TimeOut = POLL_TIMEOUT_COUNTER;
-    u8 *RxBufferPtr[4];
+    int DMA_Id, i;
+    u8 *RxBufferPtr[RX_DMA_COUNT];
 
-    RxBufferPtr[0] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0);
-    RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(1);
-    RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(2);
-    RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(3);
+    //Set memory addresses to store into memory    
+    for(i=0; i< RX_DMA_COUNT; i++){
+       RxBufferPtr[i] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(i);         
+    }
 
-
+    //Start the generation of images in the FPGA
     Xil_Out32(XPAR_INSTRUMENTS_STARTER_0_BASEADDR, 0x01);
 
-    for (t = 0; t < Tries; t++) {
-    
-        Status = XAxiDma_SimpleTransfer(&AxiDma[0],(UINTPTR)RxBufferPtr[0],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
-        }
 
-        Status = XAxiDma_SimpleTransfer(&AxiDma[1],(UINTPTR)RxBufferPtr[1],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
+    for (int t = 0; t < num_transfers; t++) {
+        
+        //Tranfers into memory
+        for (DMA_Id= 0; DMA_Id<RX_DMA_COUNT; DMA_Id++){
+            Status = XAxiDma_SimpleTransfer(&AxiDma[DMA_Id],(UINTPTR)RxBufferPtr[DMA_Id],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
+            if (Status != XST_SUCCESS) {
+                xil_printf("Transfer Failed\r\n");
+                return XST_FAILURE;
+            }
         }
-
-        Status = XAxiDma_SimpleTransfer(&AxiDma[2],(UINTPTR)RxBufferPtr[2],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
-        }
-
-        Status = XAxiDma_SimpleTransfer(&AxiDma[3],(UINTPTR)RxBufferPtr[3],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
-        }
-
+        
         // Wait until DMA is done or timeout
-        while (TimeOut) {
+        while (1) {
             if (!XAxiDma_Busy(&AxiDma[0], XAXIDMA_DEVICE_TO_DMA) &&
-                !XAxiDma_Busy(&AxiDma[1], XAXIDMA_DEVICE_TO_DMA) &&
-                !XAxiDma_Busy(&AxiDma[2], XAXIDMA_DEVICE_TO_DMA) 
+                !XAxiDma_Busy(&AxiDma[1], XAXIDMA_DEVICE_TO_DMA) 
+                //&&
+                //!XAxiDma_Busy(&AxiDma[2], XAXIDMA_DEVICE_TO_DMA) 
                 //&&
                 //!XAxiDma_Busy(&AxiDma[3], XAXIDMA_DEVICE_TO_DMA)
                 ) {
@@ -372,24 +358,38 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
             }
         }
 
-        RxBufferPtr[0] += MAX_PKT_LEN;
-        RxBufferPtr[1] += MAX_PKT_LEN;
-        RxBufferPtr[2] += MAX_PKT_LEN;
-        RxBufferPtr[3] += MAX_PKT_LEN;
-
+        //Update storage position
+        for(i=0; i< RX_DMA_COUNT; i++){
+            RxBufferPtr[i] += MAX_PKT_LEN;
+        }
         
     }
 
     Xil_DCacheFlush();
 
-    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(0), Tries, MAX_PKT_LEN, 0); 
-    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(1), Tries, MAX_PKT_LEN, 1); 
-    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(2), Tries, MAX_PKT_LEN, 2); 
-    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(3), Tries, MAX_PKT_LEN, 3); 
+    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(0), num_transfers, MAX_PKT_LEN, 0); 
+    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(1), num_transfers, MAX_PKT_LEN, 1); 
+    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(2), num_transfers, MAX_PKT_LEN, 2); 
+    //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(3), num_transfers, MAX_PKT_LEN, 3); 
 
     return XST_SUCCESS;
 }
 
+
+/*****************************************************************************/
+/**
+ * Rounds a given integer value up to the nearest multiple of a specified alignment.
+ *
+ * @param   value       The integer value to align.
+ * @param   alignment   The alignment boundary (must be > 0). Typically a power of two.
+ *
+ * @return  The smallest integer >= value that is a multiple of alignment.
+ *
+ * @example
+ *  int size = 30;
+ *  int aligned = align_up(size, 16);  // aligned = 32
+ *
+ ******************************************************************************/
 int align_up(int value, int alignment) {
     int remainder = value % alignment;
     if (remainder == 0)
@@ -399,7 +399,31 @@ int align_up(int value, int alignment) {
 }
 
 
-void PrintCompressedImages()
+
+/*****************************************************************************/
+/**
+ * Prints the contents of all compressed images stored in memory.
+ *
+ * This function iterates through the global `TableOfImages` array, which
+ * contains metadata (start pointer and size) for each compressed image. For
+ * each image, it prints:
+ *  - Image index
+ *  - Start memory address
+ *  - Number of bytes
+ *  - Optionally, the hexadecimal content of the image (16 bytes per line)
+ *    if the `Show_Content` parameter is true.
+ *
+ * @param   Show_Content  If true, prints the hexadecimal contents of each image.
+ *
+ * @param   None.
+ *
+ * @return  None.
+ *
+ * @note
+ *  - Intended for debugging and verification of compressed image data.
+ *
+ ******************************************************************************/
+void PrintCompressedImages(bool Show_Content)
 {
     xil_printf("---- Printing Compressed Images ----\r\n");
 
@@ -410,24 +434,51 @@ void PrintCompressedImages()
         xil_printf("NumBytes: %d\r\n", TableOfImages[i].NumBytes);
 
         // Print data in hex, 16 bytes per line
-        for (int j = 0; j < TableOfImages[i].NumBytes; j++)
-        {
-            xil_printf("%02X ", TableOfImages[i].StartingPtr[j]);
+        if(Show_Content){
+            for (int j = 0; j < TableOfImages[i].NumBytes; j++)
+            {
+                xil_printf("%02X ", TableOfImages[i].StartingPtr[j]);
 
-            if ((j + 1) % 16 == 0)  // new line every 16 bytes
-                xil_printf("\r\n");
-        }
-
+                if ((j + 1) % 16 == 0)  // new line every 16 bytes
+                    xil_printf("\r\n");
+            }
+        }        
         xil_printf("\r\n----------------------------------\r\n");
+        
+        
     }
 }
 
+
+
+/*****************************************************************************/
+/**
+ * Performs compression of images using a hardware accelerator via AXI DMA.
+ *
+ * This function transfers uncompressed image data to a compressor IP block 
+ * and retrieves the compressed output back into a contiguous
+ * memory buffer. Data for each compressed image is stored
+ * in the global `TableOfImages` array for later inspection.
+ *
+ * @param   None
+ *
+ * @return
+ *          - XST_SUCCESS if all transfers and compression complete successfully.
+ *          - XST_FAILURE if any DMA transfer fails.
+ *
+ * @note
+ *  - The function assumes that the DMA engine at index 4 (`AxiDma[4]`) is
+ *    configured to interface with the compressor IP.
+ *  - Memory addresses for uncompressed input are provided by `RX_BUFFER_BASE_4()`.
+ *  - Compressed data is stored starting at `RX_COMPRESSION_BUFFER`.
+ *  - Each transfer’s byte count is aligned to 16 bytes using `align_up()`.
+ *
+ ******************************************************************************/
 int Compression()
 {
 	int Status;
 	u8 *RxCompressorPtr, *RxBufferPtr[4];
 
-	int TimeOut = POLL_TIMEOUT_COUNTER;
     int i, numDMA;
     int aligned_bytes;
 
@@ -435,16 +486,17 @@ int Compression()
     RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(1);
     RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(2);
     RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(3);
+    
 	RxCompressorPtr = (u8 *)RX_COMPRESSION_BUFFER;
     u32 BytesTransferred;
 
 
-    
     for(i=0;i<NUMBER_OF_IMAGES_PER_DMA;i++) {           
         for(numDMA=0; numDMA<RX_DMA_COUNT; numDMA++){
+            
             //Transfer data to Compressor
             Status = XAxiDma_SimpleTransfer(&AxiDma[4], (UINTPTR) RxBufferPtr[numDMA],
-                            16384*512, XAXIDMA_DMA_TO_DEVICE);
+                            SIZE_OF_IMAGE, XAXIDMA_DMA_TO_DEVICE);
                             
             
             if (Status != XST_SUCCESS) {
@@ -462,7 +514,7 @@ int Compression()
                 return XST_FAILURE;
             }
 
-            while (TimeOut) {
+            while (1) {
                 if (!(XAxiDma_Busy(&AxiDma[4], XAXIDMA_DEVICE_TO_DMA))) {
                     break;
                 }
@@ -483,11 +535,8 @@ int Compression()
     }
 
     Xil_DCacheFlush();
-    //PrintCompressedImages();
+    PrintCompressedImages(false);
 	
-
-    /* Test finishes successfully
-	 */
 	return XST_SUCCESS;
 }
 
