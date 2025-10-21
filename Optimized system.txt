@@ -1,59 +1,7 @@
 /******************************************************************************
-Full System with optimization
+Data Handler Architecture with a Multiple Compression Units (150 MHz)
 ******************************************************************************/
 
-/*****************************************************************************/
-/**
- *
- * @file xaxidma_example_simple_poll.c
- *
- * This file demonstrates how to use the xaxidma driver on the Xilinx AXI
- * DMA core (AXIDMA) to transfer packets in polling mode when the AXI DMA core
- * is configured in simple mode.
- *
- * This code assumes a loopback hardware widget is connected to the AXI DMA
- * core for data packet loopback.
- *
- * To see the debug print, you need a Uart16550 or uartlite in your system,
- * and please set "-DDEBUG" in your compiler options. You need to rebuild your
- * software executable.
- *
- *
- * <pre>
- * MODIFICATION HISTORY:
- *
- * Ver   Who  Date     Changes
- * ----- ---- -------- -------------------------------------------------------
- * 4.00a rkv  02/22/11 New example created for simple DMA, this example is for
- *       	       simple DMA
- * 5.00a srt  03/06/12 Added Flushing and Invalidation of Caches to fix CRs
- *		       648103, 648701.
- *		       Added V7 DDR Base Address to fix CR 649405.
- * 6.00a srt  03/27/12 Changed API calls to support MCDMA driver.
- * 7.00a srt  06/18/12 API calls are reverted back for backward compatibility.
- * 7.01a srt  11/02/12 Buffer sizes (Tx and Rx) are modified to meet maximum
- *		       DDR memory limit of the h/w system built with Area mode
- * 7.02a srt  03/01/13 Updated DDR base address for IPI designs (CR 703656).
- * 9.1   adk  01/07/16 Updated DDR base address for Ultrascale (CR 799532) and
- *		       removed the defines for S6/V6.
- * 9.3   ms   01/23/17 Modified xil_printf statement in main function to
- *                     ensure that "Successfully ran" and "Failed" strings are
- *                     available in all examples. This is a fix for CR-965028.
- *       ms   04/05/17 Modified Comment lines in functions to
- *                     recognize it as documentation block for doxygen
- *                     generation of examples.
- * 9.9   rsp  01/21/19 Fix use of #elif check in deriving DDR_BASE_ADDR.
- * 9.10  rsp  09/17/19 Fix cache maintenance ops for source and dest buffer.
- * 9.14  sk   03/08/22 Delete DDR memory limits comments as they are not
- * 		       relevant to this driver version.
- * 9.15  sa   08/12/22 Updated the example to use latest MIG cannoical define
- * 		       i.e XPAR_MIG_0_C0_DDR4_MEMORY_MAP_BASEADDR.
- * 9.16  sa   09/29/22 Fix infinite loops in the example.
- * </pre>
- *
- * ***************************************************************************
-
- */
 /***************************** Include Files *********************************/
 #include "xaxidma.h"
 #include "xparameters.h"
@@ -61,6 +9,7 @@ Full System with optimization
 #include "sleep.h"
 #include "xiltimer.h"
 #include <stdio.h>
+#include <stdbool.h>
 
 #if defined(XPAR_UARTNS550_0_BASEADDR)
 #include "xuartns550_l.h"       /* to use uartns550 */
@@ -110,7 +59,7 @@ DEFAULT SET TO 0x01000000
 #define RX_BUFFER_HIGH		(MEM_BASE_ADDR + 0x004FFFFF)
 
 #define RX_TOTAL_SIZE       0x80000000U       // 2GB
-//#define RX_TOTAL_SIZE  (16*4 * 1024)  // 16 KB = 16 Ã— 1024 bytes     
+//#define RX_TOTAL_SIZE  (16*4 * 1024)  // 16 KB = 16 × 1024 bytes     
 #define RX_DMA_COUNT        4
 #define RX_PER_DMA_SIZE     (RX_TOTAL_SIZE / RX_DMA_COUNT)  // 0x20000000 = 512MB
 
@@ -120,11 +69,13 @@ DEFAULT SET TO 0x01000000
 
 
 
-#define TEST_START_VALUE	0xC
+#define NUMBER_OF_IMAGES_PER_DMA 50
 
-#define NUMBER_OF_TRANSFERS	2
-#define NUMBER_OF_DMA_TRANSFERS	 NUMBER_OF_TRANSFERS*4
-#define POLL_TIMEOUT_COUNTER    1000000U
+#define PACKET_SIZE  65536
+#define SIZE_OF_IMAGE 8388608
+
+#define NUMBER_OF_TRANSFERS_PER_IMAGE	 SIZE_OF_IMAGE/PACKET_SIZE
+#define TOTAL_NUMBER_OF_TRANSFERS  NUMBER_OF_TRANSFERS_PER_IMAGE*NUMBER_OF_IMAGES_PER_DMA*4
 
 /**************************** Type Definitions *******************************/
 
@@ -139,9 +90,8 @@ extern void xil_printf(const char *format, ...);
 #endif
 
 
-int XAxiDma_SimplePollExample(int Dma_read, int Dma_store, int Tries, int MAX_PKT_LEN);
 int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN);
-int Compression(int Tries, int MAX_PKT_LEN);
+void PrintMemoryData_Interleaved(bool Show_Content);
 
 
 struct ImagesPosition{
@@ -149,19 +99,29 @@ struct ImagesPosition{
     int NumBytes;    
 };
 
-struct ImagesPosition TableOfImages[NUMBER_OF_DMA_TRANSFERS];
+struct ImagesPosition TableOfImages[TOTAL_NUMBER_OF_TRANSFERS];
 int NumOfImagesOnTable=0;
 /************************** Variable Definitions *****************************/
 /*
  * Device instance definitions
  */
 XAxiDma AxiDma[4];
-XTime tStart, tEnd;
-float total_time=0;
-int total_cycles=0;
 
 
 
+/************************** Functions ****************************************/
+
+
+
+/*****************************************************************************/
+/**
+* Initializes a DMA in simple mode with no interruptors
+*
+* @return
+*		- XST_SUCCESS if example finishes successfully
+*		- XST_FAILURE if example fails.
+*
+******************************************************************************/
 #ifndef SDT
 int XAxiDma_Initialization(u16 DeviceId, int DMA)
 #else
@@ -209,22 +169,6 @@ int XAxiDma_Initialization(UINTPTR BaseAddress, int DMA)
 }
 
 
-void PrintMemoryData() {
-    for(int Dma=0; Dma<RX_DMA_COUNT;Dma++)  {  
-        xil_printf("\n--- DMA Buffer Contents %d ---\n", Dma);
-        for (int i = 0; i < NUMBER_OF_TRANSFERS; i++) {
-            u8 *ptr = TableOfImages[i+Dma*NUMBER_OF_TRANSFERS].StartingPtr;
-            xil_printf("Image %d:\n", i);
-            for (int j = 0; j < TableOfImages[i+Dma*NUMBER_OF_TRANSFERS].NumBytes; j++) {
-                xil_printf("0x%02X ", ptr[j]);
-                if ((j + 1) % 16 == 0) xil_printf("\r\n");
-            }
-            xil_printf("\nNumber of Bytes %d\r\n",TableOfImages[i+Dma*NUMBER_OF_TRANSFERS].NumBytes);
-            xil_printf("\r\n");
-        }
-    }
-}
-
 
 /*****************************************************************************/
 /**
@@ -242,45 +186,39 @@ void PrintMemoryData() {
 ******************************************************************************/
 int main()
 {
-	int Status,Status0,Status1,Status2,Status3,Status4,Status5;
+	int Status[RX_DMA_COUNT];
 
-
-	xil_printf("\r\n--- Entering main() --- \r\n");
-
-	/* Run the poll example for simple transfer */
 #ifndef SDT
-	Status0 = XAxiDma_Initialization(DMA_DEV_ID_0,0);
-    Status1 = XAxiDma_Initialization(DMA_DEV_ID_1,1);
-    Status2 = XAxiDma_Initialization(DMA_DEV_ID_2,2);
-    Status3 = XAxiDma_Initialization(DMA_DEV_ID_3,3);
-
+	Status[0] = XAxiDma_Initialization(DMA_DEV_ID_0,0);
+    Status[1] = XAxiDma_Initialization(DMA_DEV_ID_1,1);
+    Status[2] = XAxiDma_Initialization(DMA_DEV_ID_2,2);
+    Status[3] = XAxiDma_Initialization(DMA_DEV_ID_3,3);
     
 #else
-	Status0 = XAxiDma_Initialization(XPAR_XAXIDMA_0_BASEADDR,0);
-    Status1 = XAxiDma_Initialization(XPAR_XAXIDMA_1_BASEADDR,1);
-    Status2 = XAxiDma_Initialization(XPAR_XAXIDMA_2_BASEADDR,2);
-    Status3 = XAxiDma_Initialization(XPAR_XAXIDMA_3_BASEADDR,3);
-    
+	Status[0] = XAxiDma_Initialization(XPAR_XAXIDMA_0_BASEADDR,0);
+    Status[1] = XAxiDma_Initialization(XPAR_XAXIDMA_1_BASEADDR,1);
+    Status[2] = XAxiDma_Initialization(XPAR_XAXIDMA_2_BASEADDR,2);
+    Status[3] = XAxiDma_Initialization(XPAR_XAXIDMA_3_BASEADDR,3);   
     
 #endif
 
-	if (Status0 != XST_SUCCESS || Status1 != XST_SUCCESS || Status2 != XST_SUCCESS || Status3 != XST_SUCCESS || Status4 != XST_SUCCESS || Status5 != XST_SUCCESS) {
-		xil_printf("XAxiDma_SimplePoll Example Failed\r\n");
-		return XST_FAILURE;
-	}
+    //Verify if initialization was successful
+    for (int i=0; i<RX_DMA_COUNT; i++){
+        if (Status[i] != XST_SUCCESS){
+            xil_printf("Failed to Initialize DMA %d\r\n", i);
+		    return XST_FAILURE;            
+        }
+    }
    
-
-    //Status= Store_All_DMAS_parallel(32768,128);
-    Status= Store_All_DMAS_parallel(NUMBER_OF_TRANSFERS,1024);
-    if (Status != XST_SUCCESS) {
+    xil_printf("Entering Storing\r\n");
+    Status[0]= Store_Compressed_Images(NUMBER_OF_TRANSFERS_PER_IMAGE*NUMBER_OF_IMAGES_PER_DMA,PACKET_SIZE);
+    if (Status[0] != XST_SUCCESS) {
         xil_printf("DMA transfers failed.\r\n");
         return XST_FAILURE;
     }
-    PrintMemoryData();
+    PrintMemoryData_Interleaved(false);
 
-	xil_printf("Successfully ran XAxiDma_SimplePoll Example\r\n");
-
-	xil_printf("--- Exiting main() --- \r\n");
+	xil_printf("Successfull Execution\r\n");
 
 	return XST_SUCCESS;
 
@@ -313,6 +251,28 @@ static void Uart550_Setup(void)
 }
 #endif
 
+
+
+/*****************************************************************************/
+/**
+ * Prints the contents of a DMA receive buffer in hexadecimal format.
+ *
+ * This function iterates through the received DMA buffer memory and prints
+ * each packet's contents for debugging or verification purposes. Each packet
+ * is printed in a structured format, showing 16 bytes per line.
+ *
+ * @param	base             Pointer to the start of the DMA buffer.
+ * @param	num_transfers    Number of packet transfers to print.
+ * @param	packet_size      Size (in bytes) of each DMA packet.
+ * @param	num_DMA          DMA channel index (used only for display labeling).
+ *
+ * @return	None.
+ *
+ * @note
+ *  - This function is intended for debugging.
+ *  - The function assumes linear contiguous memory for the DMA buffer!
+ *
+ ******************************************************************************/
 void PrintRxData(u8 *base, int num_transfers, int packet_size, int num_DMA) {
     xil_printf("\n--- DMA Buffer Contents %d ---\n", num_DMA);
     for (int i = 0; i < num_transfers; i++) {
@@ -327,6 +287,96 @@ void PrintRxData(u8 *base, int num_transfers, int packet_size, int num_DMA) {
 }
 
 
+
+
+/*****************************************************************************/
+/**
+ * Prints information about all interleaved DMA image partitions.
+ *
+ * This function iterates through all DMA channels (`RX_DMA_COUNT`) and prints
+ * metadata for each image reconstructed from multiple partitions stored in
+ * `TableOfImages`. Each partition of each DMA is the DMA index plus 4.
+ *
+ * For each DMA:
+ *  - Prints the list of image partitions handled by that DMA.
+ *  - For each image:
+ *      - Computes the total number of bytes across all partitions of that image.
+ *      - Displays the start address of the first partition in memory.
+ *      - Optionally prints the raw hexadecimal content of all partitions.
+ *
+ * @param Show_Content
+ *        If `true`, prints the raw memory contents (in hexadecimal format)
+ *        for each image partition. If `false`, only metadata is printed.
+ *
+ * @note
+ *  - The `TableOfImages` array must be organized such that data from each DMA
+ *    and partition follows the indexing pattern:
+ *      @code
+ *      idx = Dma + part*RX_DMA_COUNT + img*NUMBER_OF_TRANSFERS_PER_IMAGE*RX_DMA_COUNT
+ *      @endcode
+ *    This reflects the interleaved ordering of images and DMA outputs.
+ *
+ *  - This function is mainly for debugging or validating that image data from
+ *    multiple DMAs and partitions is being stored correctly and contiguously.
+ *
+ ******************************************************************************/
+void PrintMemoryData_Interleaved(bool Show_Content) {
+    for(int Dma = 0; Dma < RX_DMA_COUNT; Dma++)  {  
+        xil_printf("\n--- DMA %d Partitions ---\n", Dma);
+
+        int num_images = NUMBER_OF_IMAGES_PER_DMA;
+
+        for (int img = 0; img < num_images; img++) {
+            xil_printf("Image %d:\n", img);
+
+            // Start address of the first partition for this DMA
+            u8 *start_ptr = TableOfImages[Dma + img*RX_DMA_COUNT*NUMBER_OF_TRANSFERS_PER_IMAGE].StartingPtr;
+
+            // Sum total bytes across all partitions
+            int total_bytes = 0;
+            for (int part = 0; part < NUMBER_OF_TRANSFERS_PER_IMAGE; part++) {
+                int idx = Dma + part*RX_DMA_COUNT + img*NUMBER_OF_TRANSFERS_PER_IMAGE*RX_DMA_COUNT;
+                total_bytes += TableOfImages[idx].NumBytes;
+                //xil_printf("Bytes: %d\r\n", TableOfImages[idx].NumBytes);
+            }
+
+            xil_printf("Start Address: 0x%08X\r\n", (unsigned int)start_ptr);
+            xil_printf("Total Bytes: %d\r\n", total_bytes);
+
+            // print content across partitions
+            if (Show_Content) {
+                for (int part = 0; part < NUMBER_OF_TRANSFERS_PER_IMAGE; part++) {
+                    int idx = Dma + part*RX_DMA_COUNT + img*NUMBER_OF_TRANSFERS_PER_IMAGE*RX_DMA_COUNT;
+                    u8 *ptr = TableOfImages[idx].StartingPtr;
+                    int part_bytes = TableOfImages[idx].NumBytes;
+
+                    for (int j = 0; j < part_bytes; j++) {
+                        xil_printf("%02X ", ptr[j]);
+                        if ((j + 1) % 16 == 0) xil_printf("\r\n");
+                    }
+                }
+            }
+
+            xil_printf("\r\n----------------------------------\r\n");
+        }
+    }
+}
+
+
+/*****************************************************************************/
+/**
+ * Rounds a given integer value up to the nearest multiple of a specified alignment.
+ *
+ * @param   value       The integer value to align.
+ * @param   alignment   The alignment boundary (must be > 0). Typically a power of two.
+ *
+ * @return  The smallest integer >= value that is a multiple of alignment.
+ *
+ * @example
+ *  int size = 30;
+ *  int aligned = align_up(size, 16);  // aligned = 32
+ *
+ ******************************************************************************/
 int align_up(int value, int alignment) {
     int remainder = value % alignment;
     if (remainder == 0)
@@ -335,86 +385,58 @@ int align_up(int value, int alignment) {
         return value + (alignment - remainder);  // Round up to next multiple
 }
 
-int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
+
+
+
+int Store_Compressed_Images(int Tries, int MAX_PKT_LEN) {
     int Status;
     int i, t;
-    int TimeOut = POLL_TIMEOUT_COUNTER;
-    u8 *RxBufferPtr[4];
-    u32 BytesTransferred[4];
+    int DMA_Id;
+    u8 *RxBufferPtr[RX_DMA_COUNT];
+    u32 BytesTransferred[RX_DMA_COUNT];
 
-    RxBufferPtr[0] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(0);
-    RxBufferPtr[1] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(1);
-    RxBufferPtr[2] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(2);
-    RxBufferPtr[3] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(3);
+    //Set memory addresses to store into memory    
+    for(i=0; i< RX_DMA_COUNT; i++){
+       RxBufferPtr[i] = (u8 *)(UINTPTR)RX_BUFFER_BASE_4(i);         
+    }
 
-    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[0], MAX_PKT_LEN*Tries);
-    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[1], MAX_PKT_LEN*Tries);
-    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[2], MAX_PKT_LEN*Tries);
-    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr[3], MAX_PKT_LEN*Tries);
-
-    Xil_Out32(XPAR_SPW_GEN_0_BASEADDR, 0x01);
-    Xil_Out32(XPAR_SPW_GEN_1_BASEADDR, 0x01);
-    Xil_Out32(XPAR_SPW_GEN_2_BASEADDR, 0x01);
-    Xil_Out32(XPAR_SPW_GEN_3_BASEADDR, 0x01);
+    //Start the generation of images in the FPGA
+    Xil_Out32(XPAR_INSTRUMENTS_STARTER_0_BASEADDR, 0x01);
 
     for (t = 0; t < Tries; t++) {
     
-        Status = XAxiDma_SimpleTransfer(&AxiDma[0],(UINTPTR)RxBufferPtr[0],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
+        //Tranfers into memory
+        for (DMA_Id= 0; DMA_Id<RX_DMA_COUNT; DMA_Id++){
+            Status = XAxiDma_SimpleTransfer(&AxiDma[DMA_Id],(UINTPTR)RxBufferPtr[DMA_Id],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
+            if (Status != XST_SUCCESS) {
+                xil_printf("Transfer Failed\r\n");
+                return XST_FAILURE;
+            }
         }
 
-        Status = XAxiDma_SimpleTransfer(&AxiDma[1],(UINTPTR)RxBufferPtr[1],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
-        }
-
-        Status = XAxiDma_SimpleTransfer(&AxiDma[2],(UINTPTR)RxBufferPtr[2],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
-        }
-
-        Status = XAxiDma_SimpleTransfer(&AxiDma[3],(UINTPTR)RxBufferPtr[3],MAX_PKT_LEN, XAXIDMA_DEVICE_TO_DMA);
-        if (Status != XST_SUCCESS) {
-            xil_printf("Transfer Failed\r\n");
-            return XST_FAILURE;
-        }
         // Wait until DMA is done or timeout
-        while (TimeOut) {
+        while (1) {
             if (!XAxiDma_Busy(&AxiDma[0], XAXIDMA_DEVICE_TO_DMA) &&
                 !XAxiDma_Busy(&AxiDma[1], XAXIDMA_DEVICE_TO_DMA) &&
                 !XAxiDma_Busy(&AxiDma[2], XAXIDMA_DEVICE_TO_DMA) &&
-                !XAxiDma_Busy(&AxiDma[3], XAXIDMA_DEVICE_TO_DMA)) {
+                !XAxiDma_Busy(&AxiDma[3], XAXIDMA_DEVICE_TO_DMA)
+                ) {
                 break;
             }
-
-            TimeOut--;
-            usleep(1);
         }
 
-        BytesTransferred[0] = XAxiDma_ReadReg( AxiDma[0].RegBase, XAXIDMA_RX_OFFSET+XAXIDMA_BUFFLEN_OFFSET );
-        BytesTransferred[1] = XAxiDma_ReadReg( AxiDma[1].RegBase, XAXIDMA_RX_OFFSET+XAXIDMA_BUFFLEN_OFFSET );
-        BytesTransferred[2] = XAxiDma_ReadReg( AxiDma[2].RegBase, XAXIDMA_RX_OFFSET+XAXIDMA_BUFFLEN_OFFSET );
-        BytesTransferred[3] = XAxiDma_ReadReg( AxiDma[3].RegBase, XAXIDMA_RX_OFFSET+XAXIDMA_BUFFLEN_OFFSET );
+        for (DMA_Id = 0; DMA_Id < RX_DMA_COUNT; DMA_Id++) {
+            // Read the number of bytes actually transferred by each DMA channel
+            BytesTransferred[DMA_Id] = XAxiDma_ReadReg(AxiDma[DMA_Id].RegBase,XAXIDMA_RX_OFFSET + XAXIDMA_BUFFLEN_OFFSET);
 
-        TableOfImages[NumOfImagesOnTable].NumBytes=BytesTransferred[0];
-        TableOfImages[NumOfImagesOnTable+1].NumBytes=BytesTransferred[1];
-        TableOfImages[NumOfImagesOnTable+2].NumBytes=BytesTransferred[2];
-        TableOfImages[NumOfImagesOnTable+3].NumBytes=BytesTransferred[3];
+            // Store transfer info into the TableOfImages
+            TableOfImages[NumOfImagesOnTable + DMA_Id].NumBytes   = BytesTransferred[DMA_Id];
+            TableOfImages[NumOfImagesOnTable + DMA_Id].StartingPtr = RxBufferPtr[DMA_Id];
 
-        TableOfImages[NumOfImagesOnTable].StartingPtr=RxBufferPtr[0];
-        TableOfImages[NumOfImagesOnTable+1].StartingPtr=RxBufferPtr[1];
-        TableOfImages[NumOfImagesOnTable+2].StartingPtr=RxBufferPtr[2];
-        TableOfImages[NumOfImagesOnTable+3].StartingPtr=RxBufferPtr[3];
+            // Advance buffer pointer, aligned to 16 bytes
+            RxBufferPtr[DMA_Id] += align_up(BytesTransferred[DMA_Id], 16);
+        }
 
-
-        RxBufferPtr[0] += align_up(BytesTransferred[0], 8);
-        RxBufferPtr[1] += align_up(BytesTransferred[1], 8);
-        RxBufferPtr[2] += align_up(BytesTransferred[2], 8);
-        RxBufferPtr[3] += align_up(BytesTransferred[3], 8);
 
         NumOfImagesOnTable+=4;  
     }
@@ -424,10 +446,6 @@ int Store_All_DMAS_parallel(int Tries, int MAX_PKT_LEN) {
     //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(2), Tries, MAX_PKT_LEN, 2); 
     //PrintRxData((u8 *)(UINTPTR)RX_BUFFER_BASE_4(3), Tries, MAX_PKT_LEN, 3); 
 
-    Xil_Out32(XPAR_SPW_GEN_0_BASEADDR, 0x00);
-    Xil_Out32(XPAR_SPW_GEN_1_BASEADDR, 0x00);
-    Xil_Out32(XPAR_SPW_GEN_2_BASEADDR, 0x00);
-    Xil_Out32(XPAR_SPW_GEN_3_BASEADDR, 0x00);
 
     return XST_SUCCESS;
 }

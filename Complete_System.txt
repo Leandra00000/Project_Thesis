@@ -1,5 +1,5 @@
 /******************************************************************************
-Data Handler Architecture with a Single Compression Unit (With a single starter) (150 MHz)
+Data Handler Architecture with a Single Compression Unit (150 MHz)
 ******************************************************************************/
 
 /***************************** Include Files *********************************/
@@ -9,6 +9,7 @@ Data Handler Architecture with a Single Compression Unit (With a single starter)
 #include "sleep.h"
 #include "xiltimer.h"
 #include <stdio.h>
+#include <stdbool.h>
 
 #if defined(XPAR_UARTNS550_0_BASEADDR)
 #include "xuartns550_l.h"       /* to use uartns550 */
@@ -347,8 +348,8 @@ int Store_Images(int num_transfers, int MAX_PKT_LEN) {
         
         // Wait until DMA is done or timeout
         while (1) {
-            if (!XAxiDma_Busy(&AxiDma[0], XAXIDMA_DEVICE_TO_DMA) &&
-                !XAxiDma_Busy(&AxiDma[1], XAXIDMA_DEVICE_TO_DMA) 
+            if (!XAxiDma_Busy(&AxiDma[0], XAXIDMA_DEVICE_TO_DMA) //&&
+                //!XAxiDma_Busy(&AxiDma[1], XAXIDMA_DEVICE_TO_DMA) 
                 //&&
                 //!XAxiDma_Busy(&AxiDma[2], XAXIDMA_DEVICE_TO_DMA) 
                 //&&
